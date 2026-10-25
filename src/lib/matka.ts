@@ -37,32 +37,41 @@ const istDateTime = new Intl.DateTimeFormat("en-IN", {
 export const fmtIST = (iso: string) => istDateTime.format(new Date(iso));
 
 // Markets auto open and close on their own times, in IST (India time).
-const toMin = (t: string) => { const [h = 0, m = 0] = t.split(":").map(Number); return h * 60 + m; };
 export const istHHMM = () => {
   const d = new Date(Date.now() + (new Date().getTimezoneOffset() + 330) * 60000);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
-export type MarketState = "open" | "closed";
-export function marketStatus(m: { active: boolean; open_time: string; close_time: string; open_panna?: string | null; close_panna?: string | null }) {
-  if (!m.active) return { state: "closed" as MarketState, note: "Closed (Off)" };
-  if (m.close_panna) return { state: "closed" as MarketState, note: "Closed for today" };
+export const toMin = (t: string) => { const [h = 0, m = 0] = t.split(":").map(Number); return h * 60 + m; };
 
+export function isOpenPast(m: { open_time: string; close_time: string; open_panna?: string | null }) {
+  if (m.open_panna) return true;
   const nowM = toMin(istHHMM());
   const openM = toMin(m.open_time);
   const closeM = toMin(m.close_time);
+  return closeM > openM ? nowM >= openM : (nowM >= openM || nowM < closeM);
+}
 
-  // If close time has passed
-  const isPastClose = closeM > openM ? nowM >= closeM : (nowM >= closeM && nowM < openM);
-  if (isPastClose) {
+export function isClosePast(m: { open_time: string; close_time: string; close_panna?: string | null }) {
+  if (m.close_panna) return true;
+  const nowM = toMin(istHHMM());
+  const openM = toMin(m.open_time);
+  const closeM = toMin(m.close_time);
+  return closeM > openM ? nowM >= closeM : (nowM >= closeM && nowM < openM);
+}
+
+export type MarketState = "open" | "closed";
+export function marketStatus(m: { active: boolean; open_time: string; close_time: string; open_panna?: string | null; close_panna?: string | null }) {
+  if (!m.active) return { state: "closed" as MarketState, note: "Closed (Off)" };
+  if (isClosePast(m)) {
     return { state: "closed" as MarketState, note: "Closed for today" };
   }
 
   // If open time has passed or open result declared -> Close session is running
-  const isPastOpen = !!m.open_panna || (closeM > openM ? nowM >= openM : (nowM >= openM || nowM < closeM));
-  if (isPastOpen) {
+  if (isOpenPast(m)) {
     return { state: "open" as MarketState, note: "Open (Close Session)" };
   }
 
   // Before open time -> Market is running live for Open & Jodi/Sangam
   return { state: "open" as MarketState, note: "Open for Play" };
 }
+

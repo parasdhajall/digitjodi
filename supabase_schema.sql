@@ -107,50 +107,87 @@ $$;
 -- 9. PLACE BET STORED FUNCTION
 create or replace function public.place_bet(_market uuid, _game text, _session text, _number text, _points integer)
 returns integer language plpgsql security definer set search_path = public as $$
-declare m public.markets; bal integer; distinct_ct integer; now_t time;
+declare
+  m public.markets;
+  bal integer;
+  distinct_ct integer;
+  now_t time;
+  is_cross boolean;
+  open_passed boolean;
+  close_passed boolean;
 begin
   if auth.uid() is null then raise exception 'Not signed in'; end if;
   if _points < 10 or _points > 10000 then raise exception 'Points must be between 10 and 10000'; end if;
+  
   select * into m from public.markets where id=_market;
   if m.id is null or not m.active then raise exception 'Market closed'; end if;
+  
+  -- Time check in IST
   now_t := (now() at time zone 'Asia/Kolkata')::time;
-  if m.close_time <= m.open_time then
-    -- window crosses midnight (e.g. 21:30 to 02:15)
-    if now_t > m.close_time and now_t < m.open_time then
-      raise exception 'Market is not open right now (opens at %)', to_char(m.open_time, 'HH12:MI AM');
-    end if;
+  is_cross := (m.close_time <= m.open_time);
+
+  -- Has Close passed?
+  if not is_cross then
+    close_passed := (now_t >= m.close_time);
   else
-    if now_t < m.open_time then
-      raise exception 'Market opens at %', to_char(m.open_time, 'HH12:MI AM');
-    end if;
-    if now_t >= m.close_time then
-      raise exception 'Market has closed for today';
-    end if;
+    close_passed := (now_t >= m.close_time and now_t < m.open_time);
   end if;
-  if _game not in ('single','jodi','single_panna','double_panna','triple_panna','half_sangam','full_sangam') then raise exception 'Invalid game'; end if;
+
+  if m.close_panna is not null or close_passed then
+    raise exception 'Market has closed for today (% closed at %)', m.name, to_char(m.close_time, 'HH12:MI AM');
+  end if;
+
+  -- Has Open passed?
+  if not is_cross then
+    open_passed := (now_t >= m.open_time);
+  else
+    open_passed := (now_t >= m.open_time or now_t < m.close_time);
+  end if;
+
+  if _game not in ('single','jodi','single_panna','double_panna','triple_panna','half_sangam','full_sangam') then
+    raise exception 'Invalid game';
+  end if;
+
+  -- Games decided by Open result (Jodi, Sangam) require Open session to be active
   if _game in ('jodi','half_sangam','full_sangam') then
     _session := 'close';
-    if m.open_panna is not null then raise exception 'This game closes after the open result'; end if;
+    if m.open_panna is not null or open_passed then
+      raise exception 'Jodi & Sangam can only be played before Open timing (% Open was at %)', m.name, to_char(m.open_time, 'HH12:MI AM');
+    end if;
   end if;
+
   if _session not in ('open','close') then raise exception 'Invalid session'; end if;
-  if _session='open' and m.open_panna is not null then raise exception 'Open result already declared'; end if;
-  if m.close_panna is not null then raise exception 'Result already declared'; end if;
+
+  -- Open session bet check: strictly forbidden once open time has passed or open result declared
+  if _session = 'open' then
+    if m.open_panna is not null or open_passed then
+      raise exception 'Open session has closed for % (Open was at %). Please play Close session.', m.name, to_char(m.open_time, 'HH12:MI AM');
+    end if;
+  end if;
+
+  -- Game number format validations
   if _game = 'single_panna' then
     if _number !~ '^[0-9]{3}$' then raise exception 'Panna must be 3 digits'; end if;
     select count(distinct c) into distinct_ct from regexp_split_to_table(_number,'') c;
-    if distinct_ct<>3 then raise exception 'Single panna needs 3 different digits'; end if;
+    if distinct_ct <> 3 then raise exception 'Single panna needs 3 different digits'; end if;
   elsif _game like '%panna' then
     if _number !~ '^[0-9]{3}$' then raise exception 'Panna must be 3 digits'; end if;
     select count(distinct c) into distinct_ct from regexp_split_to_table(_number,'') c;
-    if (_game='double_panna' and distinct_ct<>2) or (_game='triple_panna' and distinct_ct<>1) then
-      raise exception 'Number does not match this panna type'; end if;
+    if (_game='double_panna' and distinct_ct <> 2) or (_game='triple_panna' and distinct_ct <> 1) then
+      raise exception 'Number does not match this panna type';
+    end if;
   elsif (_game='single' and _number !~ '^[0-9]$') or (_game='jodi' and _number !~ '^[0-9]{2}$')
      or (_game='half_sangam' and _number !~ '^[0-9]-[0-9]{3}$') or (_game='full_sangam' and _number !~ '^[0-9]{3}-[0-9]{3}$') then
-    raise exception 'Invalid number'; end if;
+    raise exception 'Invalid number';
+  end if;
+
   select points into bal from public.profiles where id=auth.uid() for update;
   if bal < _points then raise exception 'Not enough points'; end if;
+
   update public.profiles set points = points - _points where id=auth.uid() returning points into bal;
-  insert into public.bets(user_id, market_id, game_type, session, number, points) values (auth.uid(), _market, _game, _session, _number, _points);
+  insert into public.bets(user_id, market_id, game_type, session, number, points)
+  values (auth.uid(), _market, _game, _session, _number, _points);
+
   return bal;
 end $$;
 

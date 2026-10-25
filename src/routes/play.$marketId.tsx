@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, useProfile } from "@/hooks/useAuth";
-import { GAMES, PLAYABLE, type GameType, fmtTime, resultLabel } from "@/lib/matka";
+import { GAMES, PLAYABLE, type GameType, fmtTime, resultLabel, isOpenPast, isClosePast } from "@/lib/matka";
 import {
   SINGLE_PANNA_BY_ANK,
   DOUBLE_PANNA_BY_ANK,
@@ -62,10 +62,19 @@ function PlayPage() {
   }).format(new Date());
 
   const g = GAMES[game];
-  const openDone = !!m?.open_panna;
-  const effSession = g.closeOnly ? "close" : openDone ? "close" : session;
+  // Check if Open timing has passed or open result declared
+  const openClosed = m ? isOpenPast(m) : false;
+  // Check if Close timing has passed or close result declared
+  const marketClosed = m ? isClosePast(m) : false;
+
+  // If Open timing has passed or game is close-only, session MUST be "close"
+  const effSession: "open" | "close" = g.closeOnly ? "close" : openClosed ? "close" : session;
 
   const handleGameChange = (newGame: GameType) => {
+    if (openClosed && GAMES[newGame].closeOnly) {
+      toast.error(`${GAMES[newGame].label} is closed because Open timing (${fmtTime(m?.open_time || "")}) has passed.`);
+      return;
+    }
     setGame(newGame);
     setSelectedNumber(null);
     setSangamPart1("");
@@ -90,6 +99,21 @@ function PlayPage() {
     if (!user) {
       toast.error("Please sign in to place plays");
       navigate({ to: "/auth" });
+      return;
+    }
+
+    if (marketClosed) {
+      toast.error(`Market has closed for today (${m?.name} closed at ${fmtTime(m?.close_time || "")})`);
+      return;
+    }
+
+    if (effSession === "open" && openClosed) {
+      toast.error(`Open session has closed for ${m?.name} (${fmtTime(m?.open_time || "")}). Please play Close session.`);
+      return;
+    }
+
+    if (g.closeOnly && openClosed) {
+      toast.error(`${g.label} can only be played before Open timing.`);
       return;
     }
 
@@ -198,18 +222,19 @@ function PlayPage() {
       <div className="mb-3 flex overflow-x-auto no-scrollbar gap-1.5 pb-1">
         {PLAYABLE.map((k) => {
           const isSelected = game === k;
+          const isGameClosed = openClosed && GAMES[k].closeOnly;
           return (
             <button
               key={k}
               onClick={() => handleGameChange(k)}
-              disabled={GAMES[k].closeOnly && openDone}
+              disabled={isGameClosed}
               className={`whitespace-nowrap rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
                 isSelected
                   ? "bg-primary text-primary-foreground shadow"
                   : "border bg-card text-muted-foreground hover:bg-secondary/70 hover:text-foreground"
-              }`}
+              } ${isGameClosed ? "opacity-40 cursor-not-allowed bg-muted/40" : ""}`}
             >
-              {GAMES[k].label}
+              {GAMES[k].label} {isGameClosed && "(Closed)"}
             </button>
           );
         })}
@@ -224,13 +249,25 @@ function PlayPage() {
           </h2>
         </div>
 
-        {/* Session Toggle: OPEN | CLOSE Pills (as seen in screenshots) */}
+        {/* Market / Session Timing Alerts */}
+        {marketClosed ? (
+          <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-center text-xs font-semibold text-destructive">
+            ⛔ Market Closed for today ({fmtTime(m.close_time)}). New bets cannot be placed.
+          </div>
+        ) : openClosed ? (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center text-xs font-medium text-amber-500">
+            ⏰ Open Session has closed ({fmtTime(m.open_time)} passed). Playing on <strong>CLOSE Session</strong> until {fmtTime(m.close_time)}.
+          </div>
+        ) : null}
+
+        {/* Session Toggle: OPEN | CLOSE Pills */}
         {!g.closeOnly && (
           <div className="grid grid-cols-2 gap-2 rounded-xl bg-secondary/60 p-1 border">
             <button
               type="button"
-              disabled={openDone}
+              disabled={openClosed || marketClosed}
               onClick={() => {
+                if (openClosed || marketClosed) return;
                 setSession("open");
                 clearSelection();
               }}
@@ -238,14 +275,16 @@ function PlayPage() {
                 effSession === "open"
                   ? "bg-primary text-primary-foreground shadow"
                   : "text-muted-foreground hover:text-foreground"
-              } ${openDone ? "opacity-40 cursor-not-allowed" : ""}`}
+              } ${openClosed ? "opacity-40 cursor-not-allowed bg-muted/40 line-through" : ""}`}
             >
-              OPEN {openDone && "(Declared)"}
+              {m.open_panna ? "OPEN (Declared)" : openClosed ? `OPEN (Closed)` : `OPEN (${fmtTime(m.open_time)})`}
             </button>
 
             <button
               type="button"
+              disabled={marketClosed}
               onClick={() => {
+                if (marketClosed) return;
                 setSession("close");
                 clearSelection();
               }}
@@ -253,9 +292,9 @@ function PlayPage() {
                 effSession === "close"
                   ? "bg-primary text-primary-foreground shadow"
                   : "text-muted-foreground hover:text-foreground"
-              }`}
+              } ${marketClosed ? "opacity-40 cursor-not-allowed" : ""}`}
             >
-              CLOSE
+              CLOSE ({fmtTime(m.close_time)})
             </button>
           </div>
         )}
@@ -528,7 +567,15 @@ function PlayPage() {
           )}
 
           {/* Big Action Button */}
-          {!selectedNumber && game !== "half_sangam" && game !== "full_sangam" ? (
+          {marketClosed ? (
+            <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+              Market Closed for Today
+            </Button>
+          ) : openClosed && g.closeOnly ? (
+            <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+              {g.label} Closed (Open Timing Passed)
+            </Button>
+          ) : !selectedNumber && game !== "half_sangam" && game !== "full_sangam" ? (
             <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
               Select panna and enter points
             </Button>
