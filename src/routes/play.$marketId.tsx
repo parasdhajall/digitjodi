@@ -44,6 +44,13 @@ function PlayPage() {
   const [points, setPoints] = useState<number>(10);
   const [busy, setBusy] = useState(false);
 
+  // Jodi Bulk state
+  const [selectedJodis, setSelectedJodis] = useState<string[]>([]);
+  const [jodiPoints, setJodiPoints] = useState<Record<string, number>>({});
+
+  // Ank Bulk state (digits 0 to 9)
+  const [ankPoints, setAnkPoints] = useState<Record<number, number>>({});
+
   // Manual input state for Sangam
   const [sangamPart1, setSangamPart1] = useState("");
   const [sangamPart2, setSangamPart2] = useState("");
@@ -77,6 +84,9 @@ function PlayPage() {
     }
     setGame(newGame);
     setSelectedNumber(null);
+    setSelectedJodis([]);
+    setJodiPoints({});
+    setAnkPoints({});
     setSangamPart1("");
     setSangamPart2("");
   };
@@ -90,11 +100,72 @@ function PlayPage() {
     setSelectedNumber(null);
   };
 
+  // Jodi Bulk helpers
+  const toggleJodi = (jodi: string) => {
+    setSelectedJodis((prev) => {
+      if (prev.includes(jodi)) {
+        const next = prev.filter((x) => x !== jodi);
+        setJodiPoints((pts) => {
+          const copy = { ...pts };
+          delete copy[jodi];
+          return copy;
+        });
+        return next;
+      } else {
+        setJodiPoints((pts) => ({ ...pts, [jodi]: pts[jodi] || points || 10 }));
+        return [...prev, jodi];
+      }
+    });
+  };
+
+  const removeJodi = (jodi: string) => {
+    setSelectedJodis((prev) => prev.filter((x) => x !== jodi));
+    setJodiPoints((pts) => {
+      const copy = { ...pts };
+      delete copy[jodi];
+      return copy;
+    });
+  };
+
+  const setAllJodiPoints = (pts: number) => {
+    setPoints(pts);
+    const updated: Record<string, number> = {};
+    for (const j of selectedJodis) {
+      updated[j] = pts;
+    }
+    setJodiPoints(updated);
+  };
+
+  const totalJodiPoints = selectedJodis.reduce((sum, j) => sum + (jodiPoints[j] || 10), 0);
+
+  // Ank Bulk helpers
+  const setAnkPoint = (digit: number, pts: number) => {
+    setAnkPoints((prev) => ({ ...prev, [digit]: pts }));
+  };
+
+  const fillAllAnkPoints = (pts: number) => {
+    const updated: Record<number, number> = {};
+    for (let d = 0; d <= 9; d++) {
+      updated[d] = pts;
+    }
+    setAnkPoints(updated);
+  };
+
+  const clearAllAnkPoints = () => {
+    setAnkPoints({});
+  };
+
+  const activeAnkEntries = Object.entries(ankPoints)
+    .filter(([_, pts]) => typeof pts === "number" && pts >= 10)
+    .map(([d, pts]) => ({ number: d, points: pts }));
+
+  const totalAnkPoints = activeAnkEntries.reduce((sum, e) => sum + e.points, 0);
+
   const userBalance = profile?.points ?? 0;
   const winMultiplier = g.rate;
   const potentialWin = (points || 0) * winMultiplier;
 
-  // Place single bet handler
+  // Place bet handler (supports Single, Sangam, Jodi Bulk, Ank Bulk)
   const handlePlay = async () => {
     if (!user) {
       toast.error("Please sign in to place plays");
@@ -107,16 +178,89 @@ function PlayPage() {
       return;
     }
 
-    if (effSession === "open" && openClosed) {
-      toast.error(`Open session has closed for ${m?.name} (${fmtTime(m?.open_time || "")}). Please play Close session.`);
+    // 1. JODI BULK PLAY
+    if (game === "jodi_bulk") {
+      if (openClosed) {
+        toast.error(`Jodi Bulk is closed because Open timing (${fmtTime(m?.open_time || "")}) has passed.`);
+        return;
+      }
+      if (selectedJodis.length === 0) {
+        toast.error("Please select at least one Jodi");
+        return;
+      }
+      const bets = selectedJodis.map((j) => ({
+        number: j,
+        points: jodiPoints[j] || 10,
+      }));
+      const anyInvalid = bets.some((b) => b.points < 10);
+      if (anyInvalid) {
+        toast.error("Minimum points per Jodi is 10");
+        return;
+      }
+      if (totalJodiPoints > userBalance) {
+        toast.error(`Not enough points. Required: ${totalJodiPoints} pts, Your balance: ${userBalance} pts`);
+        return;
+      }
+
+      setBusy(true);
+      const { error } = await supabase.rpc("place_bulk_bets", {
+        _market: marketId,
+        _game: "jodi",
+        _session: "close",
+        _bets: bets,
+      });
+      setBusy(false);
+
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+
+      toast.success(`Success! Placed ${bets.length} Jodi bets on ${m?.name} (Total ${totalJodiPoints} pts)!`);
+      setSelectedJodis([]);
+      setJodiPoints({});
+      qc.invalidateQueries({ queryKey: ["profile"] });
       return;
     }
 
-    if (g.closeOnly && openClosed) {
-      toast.error(`${g.label} can only be played before Open timing.`);
+    // 2. ANK BULK PLAY
+    if (game === "ank_bulk") {
+      if (effSession === "open" && openClosed) {
+        toast.error(`Open session has closed for ${m?.name} (${fmtTime(m?.open_time || "")}). Please play Close session.`);
+        return;
+      }
+      if (activeAnkEntries.length === 0) {
+        toast.error("Please enter at least 10 points for one digit");
+        return;
+      }
+      if (totalAnkPoints > userBalance) {
+        toast.error(`Not enough points. Required: ${totalAnkPoints} pts, Your balance: ${userBalance} pts`);
+        return;
+      }
+
+      setBusy(true);
+      const { error } = await supabase.rpc("place_bulk_bets", {
+        _market: marketId,
+        _game: "single",
+        _session: effSession,
+        _bets: activeAnkEntries,
+      });
+      setBusy(false);
+
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+
+      toast.success(
+        `Success! Placed ${activeAnkEntries.length} Ank bets (${effSession.toUpperCase()}) on ${m?.name} (Total ${totalAnkPoints} pts)!`
+      );
+      setAnkPoints({});
+      qc.invalidateQueries({ queryKey: ["profile"] });
       return;
     }
 
+    // 3. SANGAM PLAY
     if (game === "half_sangam" || game === "full_sangam") {
       const num = `${sangamPart1}-${sangamPart2}`;
       if (!sangamPart1 || !sangamPart2) {
@@ -140,6 +284,17 @@ function PlayPage() {
       setSangamPart1("");
       setSangamPart2("");
       qc.invalidateQueries({ queryKey: ["profile"] });
+      return;
+    }
+
+    // 4. REGULAR SINGLE SELECTION PLAY
+    if (effSession === "open" && openClosed) {
+      toast.error(`Open session has closed for ${m?.name} (${fmtTime(m?.open_time || "")}). Please play Close session.`);
+      return;
+    }
+
+    if (g.closeOnly && openClosed) {
+      toast.error(`${g.label} can only be played before Open timing.`);
       return;
     }
 
@@ -245,7 +400,11 @@ function PlayPage() {
         {/* Game Title Header */}
         <div className="text-center">
           <h2 className="font-display text-2xl uppercase tracking-wider text-primary">
-            {GAMES[game].label}
+            {game === "ank_bulk"
+              ? `ANK ${effSession.toUpperCase()} BULK`
+              : game === "jodi_bulk"
+                ? "JODI BULK"
+                : GAMES[game].label}
           </h2>
         </div>
 
@@ -299,31 +458,33 @@ function PlayPage() {
           </div>
         )}
 
-        {/* Section Header: "Select Panna" + Multiplier Badge */}
-        <div className="flex items-center justify-between border-b pb-2.5">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-bold text-foreground">
-              {game.includes("panna") ? "Select Panna" : "Select Number"}
-            </span>
-            <span className="rounded-md border bg-secondary px-2 py-0.5 text-xs font-bold text-gold">
-              ×{g.rate}
-            </span>
-          </div>
-
-          {selectedNumber && (
+        {/* Section Header: "Select Panna" + Multiplier Badge (only for standard single games) */}
+        {game !== "jodi_bulk" && game !== "ank_bulk" && (
+          <div className="flex items-center justify-between border-b pb-2.5">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-primary">
-                Selected: <strong className="font-mono text-sm text-gold">{selectedNumber}</strong>
+              <span className="text-sm font-bold text-foreground">
+                {game.includes("panna") ? "Select Panna" : "Select Number"}
               </span>
-              <button
-                onClick={clearSelection}
-                className="text-xs text-muted-foreground hover:text-destructive"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+              <span className="rounded-md border bg-secondary px-2 py-0.5 text-xs font-bold text-gold">
+                ×{g.rate}
+              </span>
             </div>
-          )}
-        </div>
+
+            {selectedNumber && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-primary">
+                  Selected: <strong className="font-mono text-sm text-gold">{selectedNumber}</strong>
+                </span>
+                <button
+                  onClick={clearSelection}
+                  className="text-xs text-muted-foreground hover:text-destructive"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 1. SINGLE PANNA GRID (Only 1 Panna selectable at a time) */}
         {game === "single_panna" && (
@@ -482,7 +643,154 @@ function PlayPage() {
           </div>
         )}
 
-        {/* 6. SANGAM (Half / Full) */}
+        {/* 6. ANK BULK VIEW (Matches Screenshot 2) */}
+        {game === "ank_bulk" && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-foreground">Enter Points Per Digit</h3>
+              {/* Quick toolbar */}
+              <div className="flex items-center gap-1">
+                {[10, 20, 50, 100].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => fillAllAnkPoints(amt)}
+                    className="rounded border bg-secondary px-2 py-0.5 text-[10px] font-semibold hover:bg-primary hover:text-primary-foreground transition-colors"
+                  >
+                    +{amt} All
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={clearAllAnkPoints}
+                  className="rounded border bg-secondary px-2 py-0.5 text-[10px] font-semibold text-muted-foreground hover:text-destructive"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            {/* 10 Digit Rows: 0 to 9 (as shown in screenshot 2) */}
+            <div className="space-y-2">
+              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
+                <div key={digit} className="flex items-center gap-2">
+                  {/* Digit Badge */}
+                  <div className="flex h-11 w-12 shrink-0 items-center justify-center rounded-xl bg-secondary font-display text-lg font-bold text-foreground border">
+                    {digit}
+                  </div>
+
+                  {/* Points Input */}
+                  <Input
+                    type="number"
+                    min={10}
+                    step={10}
+                    placeholder="Points"
+                    value={ankPoints[digit] || ""}
+                    onChange={(e) => setAnkPoint(digit, Number(e.target.value) || 0)}
+                    className="h-11 flex-1 font-semibold text-sm bg-secondary/40"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 7. JODI BULK VIEW (Matches Screenshot 1) */}
+        {game === "jodi_bulk" && (
+          <div className="space-y-4">
+            {/* Select Jodis Card */}
+            <div className="rounded-2xl border bg-card p-4 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-foreground">Select Jodis</h3>
+                <span className="rounded-lg bg-foreground px-2.5 py-1 text-xs font-bold text-background shadow">
+                  {selectedJodis.length} selected
+                </span>
+              </div>
+
+              {/* 100 Jodis 10x10 Grid (00 to 99) */}
+              <div className="grid grid-cols-10 gap-1 sm:gap-1.5">
+                {Array.from({ length: 100 }, (_, i) => String(i).padStart(2, "0")).map((jodi) => {
+                  const isSel = selectedJodis.includes(jodi);
+                  return (
+                    <button
+                      key={jodi}
+                      type="button"
+                      onClick={() => toggleJodi(jodi)}
+                      className={`aspect-square rounded-md text-[11px] sm:text-xs font-mono font-bold transition-all ${
+                        isSel
+                          ? "bg-foreground text-background shadow-md ring-2 ring-primary scale-105"
+                          : "bg-secondary/70 text-foreground hover:bg-secondary border border-border/50"
+                      }`}
+                    >
+                      {jodi}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Points Per Jodi Section (matches screenshot 1) */}
+            {selectedJodis.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-foreground">Points Per Jodi</h4>
+                  {/* Quick presets to apply to all selected */}
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-muted-foreground mr-0.5">All:</span>
+                    {[10, 20, 50, 100].map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setAllJodiPoints(amt)}
+                        className="rounded border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold hover:bg-primary hover:text-primary-foreground transition-colors"
+                      >
+                        {amt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {selectedJodis.map((jodi) => (
+                    <div key={jodi} className="flex items-center gap-2">
+                      {/* Jodi Badge */}
+                      <div className="flex h-11 w-12 shrink-0 items-center justify-center rounded-xl bg-secondary font-mono text-base font-bold text-foreground border">
+                        {jodi}
+                      </div>
+
+                      {/* Points Input */}
+                      <Input
+                        type="number"
+                        min={10}
+                        step={10}
+                        placeholder="Points"
+                        value={jodiPoints[jodi] || ""}
+                        onChange={(e) =>
+                          setJodiPoints((pts) => ({
+                            ...pts,
+                            [jodi]: Number(e.target.value) || 0,
+                          }))
+                        }
+                        className="h-11 flex-1 font-semibold text-sm bg-secondary/40"
+                      />
+
+                      {/* Red Delete Button */}
+                      <button
+                        type="button"
+                        onClick={() => removeJodi(jodi)}
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 8. SANGAM (Half / Full) */}
         {(game === "half_sangam" || game === "full_sangam") && (
           <div className="space-y-4 p-3 rounded-xl bg-background/50 border">
             <p className="text-xs text-muted-foreground text-center">
@@ -521,76 +829,153 @@ function PlayPage() {
       {/* STICKY BOTTOM ACTION BAR */}
       <div className="fixed bottom-0 left-0 right-0 z-30 border-t bg-background/95 backdrop-blur-md px-4 py-3 shadow-2xl">
         <div className="mx-auto max-w-xl space-y-2">
-          {/* Points Input & Quick Presets starting from 10 */}
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground font-medium">Points:</span>
-              <Input
-                type="number"
-                min={10}
-                step={10}
-                value={points}
-                onChange={(e) => setPoints(Math.max(10, Number(e.target.value) || 10))}
-                className="w-20 text-center font-bold text-sm h-8"
-              />
-            </div>
+          {/* A. JODI BULK BOTTOM BAR */}
+          {game === "jodi_bulk" ? (
+            <div className="space-y-2">
+              {selectedJodis.length > 0 && (
+                <div className="flex items-center justify-between text-xs px-1">
+                  <span className="text-muted-foreground">
+                    Selected: <strong className="text-foreground">{selectedJodis.length} Jodis</strong>
+                  </span>
+                  <span className="font-semibold text-gold">
+                    Total: <strong>{totalJodiPoints} pts</strong> (Win Pays 90×)
+                  </span>
+                </div>
+              )}
 
-            {/* Quick point chips starting at 10 */}
-            <div className="flex gap-1 overflow-x-auto">
-              {POINT_PRESETS.map((amt) => (
-                <button
-                  key={amt}
-                  type="button"
-                  onClick={() => setPoints(amt)}
-                  className={`rounded-md px-2.5 py-1 text-xs font-semibold border transition-colors ${
-                    points === amt
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "bg-card hover:bg-secondary text-foreground"
-                  }`}
+              {marketClosed ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Market Closed for Today
+                </Button>
+              ) : openClosed ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Jodi Bulk Closed (Open Timing Passed)
+                </Button>
+              ) : selectedJodis.length === 0 ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Select jodie and enter points
+                </Button>
+              ) : (
+                <Button
+                  onClick={handlePlay}
+                  disabled={busy || totalJodiPoints === 0}
+                  className="w-full h-11 text-sm font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
                 >
-                  {amt}
-                </button>
-              ))}
+                  {busy ? "Placing Plays…" : `Place Bets (${selectedJodis.length} Jodis · Total ${totalJodiPoints} pts)`}
+                </Button>
+              )}
             </div>
-          </div>
+          ) : game === "ank_bulk" ? (
+            /* B. ANK BULK BOTTOM BAR */
+            <div className="space-y-2">
+              {activeAnkEntries.length > 0 && (
+                <div className="flex items-center justify-between text-xs px-1">
+                  <span className="text-muted-foreground">
+                    Playing: <strong className="text-foreground">{activeAnkEntries.length} Digits</strong> ({effSession.toUpperCase()})
+                  </span>
+                  <span className="font-semibold text-gold">
+                    Total: <strong>{totalAnkPoints} pts</strong> (Win Pays 9×)
+                  </span>
+                </div>
+              )}
 
-          {/* Potential Win Banner when selected */}
-          {selectedNumber && (
-            <div className="flex items-center justify-between text-xs px-1">
-              <span className="text-muted-foreground">
-                Playing: <strong className="text-foreground">{selectedNumber}</strong> ({effSession.toUpperCase()})
-              </span>
-              <span className="font-semibold text-gold">
-                Win Pays {winMultiplier}× = <strong>{potentialWin} pts</strong>
-              </span>
+              {marketClosed ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Market Closed for Today
+                </Button>
+              ) : effSession === "open" && openClosed ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Open Session Closed
+                </Button>
+              ) : activeAnkEntries.length === 0 ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Place Bets
+                </Button>
+              ) : (
+                <Button
+                  onClick={handlePlay}
+                  disabled={busy}
+                  className="w-full h-11 text-sm font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
+                >
+                  {busy ? "Placing Plays…" : `Place Bets (${activeAnkEntries.length} Digits · Total ${totalAnkPoints} pts)`}
+                </Button>
+              )}
             </div>
-          )}
-
-          {/* Big Action Button */}
-          {marketClosed ? (
-            <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
-              Market Closed for Today
-            </Button>
-          ) : openClosed && g.closeOnly ? (
-            <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
-              {g.label} Closed (Open Timing Passed)
-            </Button>
-          ) : !selectedNumber && game !== "half_sangam" && game !== "full_sangam" ? (
-            <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
-              Select panna and enter points
-            </Button>
           ) : (
-            <Button
-              onClick={handlePlay}
-              disabled={busy}
-              className="w-full h-11 text-sm font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
-            >
-              {busy
-                ? "Placing Play…"
-                : game.includes("sangam")
-                  ? `Play Sangam (${points} pts)`
-                  : `Play ${selectedNumber} (${points} pts)`}
-            </Button>
+            /* C. STANDARD SINGLE / SANGAM BOTTOM BAR */
+            <div className="space-y-2">
+              {/* Points Input & Quick Presets starting from 10 */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground font-medium">Points:</span>
+                  <Input
+                    type="number"
+                    min={10}
+                    step={10}
+                    value={points}
+                    onChange={(e) => setPoints(Math.max(10, Number(e.target.value) || 10))}
+                    className="w-20 text-center font-bold text-sm h-8"
+                  />
+                </div>
+
+                {/* Quick point chips starting at 10 */}
+                <div className="flex gap-1 overflow-x-auto">
+                  {POINT_PRESETS.map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setPoints(amt)}
+                      className={`rounded-md px-2.5 py-1 text-xs font-semibold border transition-colors ${
+                        points === amt
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-card hover:bg-secondary text-foreground"
+                      }`}
+                    >
+                      {amt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Potential Win Banner when selected */}
+              {selectedNumber && (
+                <div className="flex items-center justify-between text-xs px-1">
+                  <span className="text-muted-foreground">
+                    Playing: <strong className="text-foreground">{selectedNumber}</strong> ({effSession.toUpperCase()})
+                  </span>
+                  <span className="font-semibold text-gold">
+                    Win Pays {winMultiplier}× = <strong>{potentialWin} pts</strong>
+                  </span>
+                </div>
+              )}
+
+              {/* Big Action Button */}
+              {marketClosed ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Market Closed for Today
+                </Button>
+              ) : openClosed && g.closeOnly ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  {g.label} Closed (Open Timing Passed)
+                </Button>
+              ) : !selectedNumber && game !== "half_sangam" && game !== "full_sangam" ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Select panna and enter points
+                </Button>
+              ) : (
+                <Button
+                  onClick={handlePlay}
+                  disabled={busy}
+                  className="w-full h-11 text-sm font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
+                >
+                  {busy
+                    ? "Placing Play…"
+                    : game.includes("sangam")
+                      ? `Play Sangam (${points} pts)`
+                      : `Play ${selectedNumber} (${points} pts)`}
+                </Button>
+              )}
+            </div>
           )}
         </div>
       </div>
