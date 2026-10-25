@@ -13,7 +13,6 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as HistoryRouteImport } from './routes/history'
-import { Route as ChartMarketIdRouteImport } from './routes/chart.$marketId'
 import { Route as PlayMarketIdRouteImport } from './routes/play.$marketId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -36,11 +35,6 @@ const HistoryRoute = HistoryRouteImport.update({
   path: '/history',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ChartMarketIdRoute = ChartMarketIdRouteImport.update({
-  id: '/chart/$marketId',
-  path: '/chart/$marketId',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const PlayMarketIdRoute = PlayMarketIdRouteImport.update({
   id: '/play/$marketId',
   path: '/play/$marketId',
@@ -52,7 +46,6 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
   '/auth': typeof AuthRoute
   '/history': typeof HistoryRoute
-  '/chart/$marketId': typeof ChartMarketIdRoute
   '/play/$marketId': typeof PlayMarketIdRoute
 }
 export interface FileRoutesByTo {
@@ -60,7 +53,6 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/auth': typeof AuthRoute
   '/history': typeof HistoryRoute
-  '/chart/$marketId': typeof ChartMarketIdRoute
   '/play/$marketId': typeof PlayMarketIdRoute
 }
 export interface FileRoutesById {
@@ -69,34 +61,14 @@ export interface FileRoutesById {
   '/admin': typeof AdminRoute
   '/auth': typeof AuthRoute
   '/history': typeof HistoryRoute
-  '/chart/$marketId': typeof ChartMarketIdRoute
   '/play/$marketId': typeof PlayMarketIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/admin'
-    | '/auth'
-    | '/history'
-    | '/chart/$marketId'
-    | '/play/$marketId'
+  fullPaths: '/' | '/admin' | '/auth' | '/history' | '/play/$marketId'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/admin'
-    | '/auth'
-    | '/history'
-    | '/chart/$marketId'
-    | '/play/$marketId'
-  id:
-    | '__root__'
-    | '/'
-    | '/admin'
-    | '/auth'
-    | '/history'
-    | '/chart/$marketId'
-    | '/play/$marketId'
+  to: '/' | '/admin' | '/auth' | '/history' | '/play/$marketId'
+  id: '__root__' | '/' | '/admin' | '/auth' | '/history' | '/play/$marketId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -104,7 +76,6 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   AuthRoute: typeof AuthRoute
   HistoryRoute: typeof HistoryRoute
-  ChartMarketIdRoute: typeof ChartMarketIdRoute
   PlayMarketIdRoute: typeof PlayMarketIdRoute
 }
 
@@ -138,13 +109,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/chart/$marketId': {
-      id: '/chart/$marketId'
-      path: '/chart/$marketId'
-      fullPath: '/chart/$marketId'
-      preLoaderRoute: typeof ChartMarketIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/play/$marketId': {
       id: '/play/$marketId'
       path: '/play/$marketId'
@@ -160,7 +124,6 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
   AuthRoute: AuthRoute,
   HistoryRoute: HistoryRoute,
-  ChartMarketIdRoute: ChartMarketIdRoute,
   PlayMarketIdRoute: PlayMarketIdRoute,
 }
 export const routeTree = rootRouteImport

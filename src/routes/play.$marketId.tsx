@@ -66,7 +66,6 @@ function PlayPage() {
         <h1 className="font-display text-4xl tracking-wide text-gold">{m.name}</h1>
         <p className="text-sm text-muted-foreground">{fmtTime(m.open_time)} – {fmtTime(m.close_time)}</p>
         <p className="my-4 font-display text-4xl tracking-widest text-primary">{resultLabel(m.open_panna, m.close_panna)}</p>
-        <Link to="/chart/$marketId" params={{ marketId }} className="text-sm text-accent underline">View result chart</Link>
 
         {!loading && !user ? (
           <Button asChild className="mt-4 w-full"><Link to="/auth">Sign in to play</Link></Button>
