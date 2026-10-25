@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { toast } from "sonner";
-import { Users, Coins, CheckCircle, Shield, Clock, PlusCircle } from "lucide-react";
+import { Users, Coins, CheckCircle, Shield, Clock, PlusCircle, Key, Ban, Search, CheckCircle2, AlertTriangle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -16,13 +16,23 @@ export const Route = createFileRoute("/admin")({
   head: () => ({
     meta: [
       { title: "Admin Management Panel — PlayOn" },
-      { name: "description", content: "Manage markets, declare results and manage players." },
+      { name: "description", content: "Manage markets, declare results, change user passwords and block accounts." },
       { property: "og:title", content: "Admin Panel — PlayOn" },
       { name: "robots", content: "noindex" },
     ],
   }),
   component: Admin,
 });
+
+type AdminUser = {
+  id: string;
+  email: string;
+  display_name: string;
+  points: number;
+  is_blocked: boolean;
+  created_at: string;
+  last_sign_in_at: string | null;
+};
 
 function Admin() {
   const { user } = useAuth();
@@ -36,23 +46,47 @@ function Admin() {
   const [times, setTimes] = useState<Record<string, { open_time: string; close_time: string }>>({});
   const [pointAdjust, setPointAdjust] = useState<Record<string, string>>({});
 
-  // Query all registered players
-  const { data: players } = useQuery({
-    queryKey: ["admin-players"],
+  // Password change dialog state
+  const [passwordModalUser, setPasswordModalUser] = useState<AdminUser | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [userSearch, setUserSearch] = useState("");
+
+  // Query all registered users with emails and block status
+  const { data: players } = useQuery<AdminUser[]>({
+    queryKey: ["admin-users-list"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
+      const { data, error } = await supabase.rpc("admin_get_all_users" as any);
+      if (error) {
+        // Fallback to profiles if function fails
+        const { data: profs, error: pErr } = await supabase.from("profiles").select("*").order("created_at", { ascending: false });
+        if (pErr) throw pErr;
+        return (profs ?? []).map((p) => ({
+          id: p.id,
+          email: p.display_name || "Player",
+          display_name: p.display_name || "Player",
+          points: p.points,
+          is_blocked: false,
+          created_at: p.created_at,
+          last_sign_in_at: null,
+        }));
+      }
+      return data as AdminUser[];
     },
   });
+
+  const filteredPlayers = useMemo(() => {
+    if (!players) return [];
+    if (!userSearch.trim()) return players;
+    const q = userSearch.toLowerCase();
+    return players.filter(
+      (p) => p.email?.toLowerCase().includes(q) || p.display_name?.toLowerCase().includes(q) || p.id.includes(q)
+    );
+  }, [players, userSearch]);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["markets"] });
     qc.invalidateQueries({ queryKey: ["admin-bets"] });
-    qc.invalidateQueries({ queryKey: ["admin-players"] });
+    qc.invalidateQueries({ queryKey: ["admin-users-list"] });
     qc.invalidateQueries({ queryKey: ["profile"] });
   };
 
@@ -66,7 +100,7 @@ function Admin() {
     refresh();
   };
 
-  const handleAdjustPoints = async (userId: string, currentPoints: number) => {
+  const handleAdjustPoints = async (userId: string) => {
     const amount = Number(pointAdjust[userId]);
     if (!amount || isNaN(amount)) {
       toast.error("Please enter a valid amount (e.g. 500 or -200)");
@@ -82,6 +116,41 @@ function Admin() {
     }
     toast.success(`Updated points by ${amount > 0 ? "+" + amount : amount} pts!`);
     setPointAdjust({ ...pointAdjust, [userId]: "" });
+    refresh();
+  };
+
+  const handleUpdatePassword = async () => {
+    if (!passwordModalUser || newPassword.length < 6) {
+      toast.error("Password must be at least 6 characters long");
+      return;
+    }
+    const { error } = await supabase.rpc("admin_set_user_password" as any, {
+      _user_id: passwordModalUser.id,
+      _new_password: newPassword,
+    });
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success(`Password successfully updated for ${passwordModalUser.email}!`);
+    setPasswordModalUser(null);
+    setNewPassword("");
+  };
+
+  const handleToggleBlock = async (u: AdminUser) => {
+    const willBlock = !u.is_blocked;
+    const actionText = willBlock ? "BLOCK" : "UNBLOCK";
+    if (!confirm(`Are you sure you want to ${actionText} ${u.email}?`)) return;
+
+    const { error } = await supabase.rpc("admin_toggle_block_user" as any, {
+      _user_id: u.id,
+      _blocked: willBlock,
+    });
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success(willBlock ? `Account for ${u.email} is now BLOCKED!` : `Account for ${u.email} is now UNBLOCKED!`);
     refresh();
   };
 
@@ -125,7 +194,7 @@ function Admin() {
               activeTab === "players" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            Players & Balances ({players?.length ?? 0})
+            Users & Security ({players?.length ?? 0})
           </button>
         </div>
       </div>
@@ -314,64 +383,130 @@ function Admin() {
       {/* TAB 2: LIVE PLAYER PLAYS */}
       {activeTab === "plays" && <AdminPlays markets={markets ?? []} />}
 
-      {/* TAB 3: PLAYERS & BALANCES */}
+      {/* TAB 3: USERS, SECURITY, PASSWORDS & BLOCKING */}
       {activeTab === "players" && (
         <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="font-display text-2xl tracking-wide text-gold">Registered Players</h2>
-            <span className="text-xs text-muted-foreground">Total Players: {players?.length ?? 0}</span>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+            <div>
+              <h2 className="font-display text-2xl tracking-wide text-gold">User Security & Account Control</h2>
+              <p className="text-xs text-muted-foreground">Change user passwords, block/unblock accounts and adjust point balances.</p>
+            </div>
+            {/* Search User */}
+            <div className="relative min-w-[240px]">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search email or username…"
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                className="pl-8 h-9 text-xs"
+              />
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-xl border bg-card">
             <table className="w-full text-xs">
               <thead className="bg-secondary text-left text-muted-foreground">
                 <tr>
-                  <th className="p-3">Player Name</th>
-                  <th>Joined Date</th>
+                  <th className="p-3">User / Email</th>
+                  <th>Status</th>
                   <th>Points Balance</th>
-                  <th className="pr-3">Add / Deduct Points</th>
+                  <th>Joined Date</th>
+                  <th className="text-right pr-4">Security Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {players?.map((p) => (
-                  <tr key={p.id} className="border-t hover:bg-muted/30">
-                    <td className="p-3 font-semibold text-foreground">
-                      <div className="flex items-center gap-2">
+                {filteredPlayers.map((p) => (
+                  <tr key={p.id} className={`border-t hover:bg-muted/30 ${p.is_blocked ? "bg-destructive/10" : ""}`}>
+                    <td className="p-3">
+                      <div className="font-semibold text-foreground flex items-center gap-2">
                         <Users className="h-3.5 w-3.5 text-primary" />
-                        <span>{p.display_name || "Player"}</span>
+                        <span>{p.email}</span>
                       </div>
-                      <span className="text-[10px] text-muted-foreground font-mono">{p.id}</span>
+                      <div className="text-[10px] text-muted-foreground">Name: {p.display_name}</div>
                     </td>
-                    <td className="text-muted-foreground">{fmtIST(p.created_at)}</td>
+
+                    <td>
+                      {p.is_blocked ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-destructive/20 border border-destructive/40 px-2.5 py-0.5 text-[11px] font-semibold text-destructive">
+                          <Ban className="h-3 w-3" /> BLOCKED
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-success/20 border border-success/40 px-2.5 py-0.5 text-[11px] font-semibold text-success">
+                          <CheckCircle2 className="h-3 w-3" /> ACTIVE
+                        </span>
+                      )}
+                    </td>
+
                     <td>
                       <span className="font-display text-lg tracking-wide text-gold">
                         {p.points.toLocaleString()} pts
                       </span>
                     </td>
-                    <td className="pr-3">
-                      <div className="flex items-center gap-2">
-                        <Input
-                          placeholder="+500 or -200"
-                          type="number"
-                          value={pointAdjust[p.id] ?? ""}
-                          onChange={(e) => setPointAdjust({ ...pointAdjust, [p.id]: e.target.value })}
-                          className="w-28 text-xs h-8"
-                        />
+
+                    <td className="text-muted-foreground text-[11px]">{fmtIST(p.created_at)}</td>
+
+                    <td className="text-right pr-4">
+                      <div className="inline-flex items-center justify-end gap-2">
+                        {/* Change Password Button */}
                         <Button
                           size="sm"
-                          className="h-8 text-xs"
-                          onClick={() => handleAdjustPoints(p.id, p.points)}
+                          variant="outline"
+                          className="h-8 text-xs flex items-center gap-1.5 border-primary/40 hover:bg-primary/20"
+                          onClick={() => {
+                            setPasswordModalUser(p);
+                            setNewPassword("");
+                          }}
                         >
-                          Update Points
+                          <Key className="h-3.5 w-3.5 text-primary" />
+                          Change Password
                         </Button>
+
+                        {/* Block / Unblock Button */}
+                        <Button
+                          size="sm"
+                          variant={p.is_blocked ? "default" : "destructive"}
+                          className="h-8 text-xs flex items-center gap-1.5"
+                          onClick={() => handleToggleBlock(p)}
+                        >
+                          {p.is_blocked ? (
+                            <>
+                              <CheckCircle2 className="h-3.5 w-3.5" /> Unblock User
+                            </>
+                          ) : (
+                            <>
+                              <Ban className="h-3.5 w-3.5" /> Block User
+                            </>
+                          )}
+                        </Button>
+
+                        {/* Quick Points Adjust */}
+                        <div className="flex items-center gap-1 ml-2">
+                          <Input
+                            placeholder="±pts"
+                            type="number"
+                            value={pointAdjust[p.id] ?? ""}
+                            onChange={(e) => setPointAdjust({ ...pointAdjust, [p.id]: e.target.value })}
+                            className="w-20 text-xs h-8 text-center"
+                          />
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="h-8 text-xs px-2.5"
+                            onClick={() => handleAdjustPoints(p.id)}
+                            title="Add or subtract points"
+                          >
+                            Update
+                          </Button>
+                        </div>
                       </div>
                     </td>
                   </tr>
                 ))}
-                {players?.length === 0 && (
+
+                {filteredPlayers.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="p-8 text-center text-muted-foreground">
-                      No players registered yet.
+                    <td colSpan={5} className="p-8 text-center text-muted-foreground">
+                      No users found.
                     </td>
                   </tr>
                 )}
@@ -379,6 +514,55 @@ function Admin() {
             </table>
           </div>
         </section>
+      )}
+
+      {/* CHANGE PASSWORD DIALOG MODAL */}
+      {passwordModalUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between border-b pb-3">
+              <div>
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <Key className="h-5 w-5 text-primary" /> Reset User Password
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  User: <strong className="text-foreground">{passwordModalUser.email}</strong>
+                </p>
+              </div>
+              <button
+                onClick={() => setPasswordModalUser(null)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-foreground block">
+                Enter New Password for User:
+              </label>
+              <Input
+                type="text"
+                placeholder="Minimum 6 characters (e.g. User@123)"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="font-mono"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                The password will be updated immediately. The user can log in with this new password right away.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <Button variant="ghost" size="sm" onClick={() => setPasswordModalUser(null)}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleUpdatePassword} disabled={newPassword.length < 6}>
+                Update Password
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );
