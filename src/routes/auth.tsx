@@ -12,7 +12,7 @@ export const Route = createFileRoute("/auth")({
       { title: "Sign in — PlayOn" },
       { name: "description", content: "Sign in or create your free PlayOn account." },
       { property: "og:title", content: "Sign in — PlayOn" },
-      { property: "og:description", content: "Create a free account and get 1000 play points." },
+      { property: "og:description", content: "Create a free account and start playing." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],

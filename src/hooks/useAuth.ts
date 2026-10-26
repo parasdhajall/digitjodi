@@ -35,3 +35,34 @@ export function useProfile(userId?: string) {
     },
   });
 }
+
+export function useTodayExpense(userId?: string) {
+  return useQuery({
+    queryKey: ["today-expense", userId],
+    enabled: !!userId,
+    refetchInterval: 10000,
+    queryFn: async () => {
+      const now = new Date();
+      const istDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
+      const istStartIso = new Date(`${istDateStr}T00:00:00+05:30`).toISOString();
+
+      const { data, error } = await supabase
+        .from("bets")
+        .select("points, payout, status")
+        .eq("user_id", userId!)
+        .gte("created_at", istStartIso);
+
+      if (error) throw error;
+      const validBets = (data ?? []).filter((b) => b.status !== "refunded");
+      const totalExpense = validBets.reduce((acc, b) => acc + (b.points || 0), 0);
+      const totalWinnings = validBets.reduce((acc, b) => acc + (b.payout || 0), 0);
+      const playsCount = validBets.length;
+
+      return {
+        totalExpense,
+        totalWinnings,
+        playsCount,
+      };
+    },
+  });
+}

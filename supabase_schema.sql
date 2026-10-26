@@ -5,7 +5,7 @@ create type public.app_role as enum ('admin','user');
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text,
-  points integer not null default 1000,
+  points integer not null default 0,
   created_at timestamptz not null default now()
 );
 grant select, update on public.profiles to authenticated;

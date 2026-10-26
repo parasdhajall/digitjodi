@@ -1,17 +1,18 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { Clock, Play, Zap, Smartphone } from "lucide-react";
+import { Clock, Play, Zap, Smartphone, TrendingUp, Coins, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { fmtTime, resultLabel, marketStatus, GAMES } from "@/lib/matka";
+import { fmtTime, resultLabel, marketStatus } from "@/lib/matka";
+import { useAuth, useProfile, useTodayExpense } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "PlayOn — Online Matka Play" },
-      { name: "description", content: "Play daily online number markets with free points. Live results and instant plays." },
+      { name: "description", content: "Play daily online number markets. Live results and instant plays." },
       { property: "og:title", content: "PlayOn — Online Matka Play" },
-      { property: "og:description", content: "Play daily number markets with free points. Instant play, no real money." },
+      { property: "og:description", content: "Play daily number markets. Instant play." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -28,18 +29,16 @@ export const marketsQuery = {
   },
 };
 
-const PLAY_RATES = [
-  { game: "Single Digit", rate: "10 ka 90", mult: "1 : 9" },
-  { game: "Jodi", rate: "10 ka 900", mult: "1 : 90" },
-  { game: "Single Panna", rate: "10 ka 1400", mult: "1 : 140" },
-  { game: "Double Panna", rate: "10 ka 2800", mult: "1 : 280" },
-  { game: "Triple Panna", rate: "10 ka 6000", mult: "1 : 600" },
-  { game: "Half Sangam", rate: "10 ka 10,000", mult: "1 : 1000" },
-  { game: "Full Sangam", rate: "10 ka 1,00,000", mult: "1 : 10,000" },
-];
-
 function Index() {
   const { data: markets, isLoading } = useQuery(marketsQuery);
+  const { user } = useAuth();
+  const { data: profile } = useProfile(user?.id);
+  const { data: todayExp } = useTodayExpense(user?.id);
+
+  const isApp = typeof navigator !== "undefined" && (
+    navigator.userAgent.includes("PlayOnApp") ||
+    (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+  );
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
@@ -54,40 +53,68 @@ function Index() {
               Online Matka Markets
             </h1>
             <p className="mt-1 text-sm text-muted-foreground sm:text-base">
-              1000 free bonus points on signup. Select a market and play your favorite game.
+              Select a market and play your favorite game.
             </p>
-            <div className="mt-3.5">
-              <a
-                href="/PlayOn.apk"
-                download="PlayOn.apk"
-                className="inline-flex items-center gap-2 rounded-xl border border-primary/40 bg-primary px-4 py-2 text-xs sm:text-sm font-bold text-primary-foreground shadow-md hover:bg-primary/90 transition-all"
-              >
-                <Smartphone className="h-4 w-4" /> Download Android App (.apk)
-              </a>
-            </div>
+            {!isApp && (
+              <div className="mt-3.5">
+                <a
+                  href="/PlayOn.apk"
+                  download="PlayOn.apk"
+                  className="inline-flex items-center gap-2 rounded-xl border border-primary/40 bg-primary px-4 py-2 text-xs sm:text-sm font-bold text-primary-foreground shadow-md hover:bg-primary/90 transition-all"
+                >
+                  <Smartphone className="h-4 w-4" /> Download Android App (.apk)
+                </a>
+              </div>
+            )}
           </div>
         </div>
       </section>
 
-      {/* Matka Play Rate Section (Inspired by matkaplay.xyz) */}
-      <section className="mb-8 rounded-xl border bg-card p-5">
-        <div className="mb-4 flex items-center justify-between border-b pb-3">
-          <h2 className="font-display text-2xl tracking-wide text-primary">Matka Play Rates</h2>
-          <span className="text-xs text-muted-foreground">Winning Payouts</span>
-        </div>
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 md:grid-cols-7">
-          {PLAY_RATES.map((r) => (
-            <div
-              key={r.game}
-              className="flex flex-col items-center justify-center rounded-lg border border-border/60 bg-background/50 p-3 text-center transition-colors hover:border-primary/50"
-            >
-              <span className="text-xs font-medium text-muted-foreground">{r.game}</span>
-              <span className="mt-1 font-display text-lg tracking-wide text-gold">{r.rate}</span>
-              <span className="text-[11px] text-muted-foreground/80">{r.mult}</span>
+      {/* User Daily Expense & Balance Overview */}
+      {user && (
+        <section className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-primary/30 bg-card p-4 shadow-sm">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Today's Bet (Expense)</span>
+            <div className="mt-1.5 flex items-baseline gap-1">
+              <span className="font-display text-3xl font-bold tracking-wide text-primary">
+                ₹{todayExp?.totalExpense ?? 0}
+              </span>
+              <span className="text-xs font-medium text-muted-foreground">pts</span>
             </div>
-          ))}
-        </div>
-      </section>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {todayExp?.playsCount ?? 0} {todayExp?.playsCount === 1 ? "bet" : "bets"} placed today
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-gold/30 bg-card p-4 shadow-sm">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Available Points</span>
+            <div className="mt-1.5 flex items-baseline gap-1">
+              <span className="font-display text-3xl font-bold tracking-wide text-gold">
+                {profile?.points ?? 0}
+              </span>
+              <span className="text-xs font-medium text-muted-foreground">pts</span>
+            </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Current account balance
+            </p>
+          </div>
+
+          <div className="col-span-2 sm:col-span-1 rounded-xl border bg-card p-4 shadow-sm flex flex-col justify-between">
+            <div>
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Today's Winnings</span>
+              <div className="mt-1.5 flex items-baseline gap-1">
+                <span className="font-display text-3xl font-bold tracking-wide text-success">
+                  ₹{todayExp?.totalWinnings ?? 0}
+                </span>
+                <span className="text-xs font-medium text-muted-foreground">pts</span>
+              </div>
+            </div>
+            <Link to="/history" className="mt-2 text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1">
+              <History className="h-3.5 w-3.5" /> View My Plays History &rarr;
+            </Link>
+          </div>
+        </section>
+      )}
 
       {/* Markets List */}
       <div className="mb-4 flex items-center justify-between">

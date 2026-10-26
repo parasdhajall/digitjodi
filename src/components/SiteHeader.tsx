@@ -3,11 +3,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Coins, LogOut, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth, useProfile } from "@/hooks/useAuth";
+import { useAuth, useProfile, useTodayExpense } from "@/hooks/useAuth";
 
 export function SiteHeader() {
   const { user } = useAuth();
   const { data: profile } = useProfile(user?.id);
+  const { data: todayExp } = useTodayExpense(user?.id);
   const qc = useQueryClient();
   const navigate = useNavigate();
 
@@ -55,9 +56,22 @@ export function SiteHeader() {
 
           {user ? (
             <>
-              <span className="flex items-center gap-1 rounded-full bg-secondary px-3 py-1 text-sm font-semibold text-primary">
-                <Coins className="h-4 w-4" /> {profile?.points ?? "…"}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span
+                  className="flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 sm:px-2.5 sm:py-1 text-xs font-semibold text-primary"
+                  title="Today's Total Bet / Aaj ka Expense"
+                >
+                  <span className="hidden sm:inline text-[10px] uppercase font-bold text-muted-foreground">Today:</span>
+                  <span className="font-bold text-foreground">₹{todayExp?.totalExpense ?? 0}</span>
+                </span>
+
+                <span
+                  className="flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 sm:py-1 text-xs sm:text-sm font-semibold text-gold"
+                  title="Points Balance"
+                >
+                  <Coins className="h-3.5 w-3.5 text-gold" /> {profile?.points ?? "…"}
+                </span>
+              </div>
               <Button size="icon" variant="ghost" onClick={signOut} aria-label="Sign out">
                 <LogOut className="h-4 w-4" />
               </Button>
