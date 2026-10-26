@@ -79,3 +79,24 @@
   background-clip: text;
   color: transparent;
 }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #thermal-receipt, #thermal-receipt * {
+    visibility: visible;
+  }
+  #thermal-receipt {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 58mm;
+    margin: 0;
+    padding: 2mm;
+    color: #000 !important;
+    background: #fff !important;
+    font-family: monospace !important;
+  }
+}
