@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
-import { Users, Coins, CheckCircle, Shield, Clock, PlusCircle, Key, Ban, Search, CheckCircle2, AlertTriangle, X } from "lucide-react";
+import { Users, Coins, CheckCircle, Shield, Clock, PlusCircle, Key, Ban, Search, CheckCircle2, AlertTriangle, X, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -74,23 +74,31 @@ function Admin() {
     },
   });
 
+  const [selectedDateForPlayers, setSelectedDateForPlayers] = useState<string>("");
+
   const { data: userBetStats } = useQuery({
-    queryKey: ["admin-user-bet-stats"],
+    queryKey: ["admin-user-bet-stats", selectedDateForPlayers],
     refetchInterval: 10000,
     queryFn: async () => {
       const now = new Date();
       const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
       const yesterdayDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const yesterdayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(yesterdayDate);
-      const yesterdayStartIso = new Date(`${yesterdayStr}T00:00:00+05:30`).toISOString();
+      let minStartIso = new Date(`${yesterdayStr}T00:00:00+05:30`).toISOString();
+
+      if (selectedDateForPlayers) {
+        const customStartIso = new Date(`${selectedDateForPlayers}T00:00:00+05:30`).toISOString();
+        if (customStartIso < minStartIso) minStartIso = customStartIso;
+      }
 
       const { data } = await supabase
         .from("bets")
         .select("user_id, points, status, created_at")
-        .gte("created_at", yesterdayStartIso);
+        .gte("created_at", minStartIso);
 
       const todayMap: Record<string, number> = {};
       const yesterdayMap: Record<string, number> = {};
+      const customMap: Record<string, number> = {};
 
       for (const b of data ?? []) {
         if (b.status !== "refunded") {
@@ -100,10 +108,13 @@ function Admin() {
           } else if (bDateStr === yesterdayStr) {
             yesterdayMap[b.user_id] = (yesterdayMap[b.user_id] || 0) + (b.points || 0);
           }
+          if (selectedDateForPlayers && bDateStr === selectedDateForPlayers) {
+            customMap[b.user_id] = (customMap[b.user_id] || 0) + (b.points || 0);
+          }
         }
       }
 
-      return { todayMap, yesterdayMap, todayStr, yesterdayStr };
+      return { todayMap, yesterdayMap, customMap, todayStr, yesterdayStr };
     },
   });
 
@@ -424,15 +435,41 @@ function Admin() {
               <h2 className="font-display text-2xl tracking-wide text-gold">User Security & Account Control</h2>
               <p className="text-xs text-muted-foreground">Change user passwords, block/unblock accounts and adjust point balances.</p>
             </div>
-            {/* Search User */}
-            <div className="relative min-w-[240px]">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search email or username…"
-                value={userSearch}
-                onChange={(e) => setUserSearch(e.target.value)}
-                className="pl-8 h-9 text-xs"
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Specific Date Filter for Players */}
+              <div className="flex items-center gap-1.5 rounded-lg border bg-secondary/80 px-2.5 py-1 text-xs">
+                <Calendar className="h-3.5 w-3.5 text-primary shrink-0" />
+                <span className="font-semibold text-[11px] text-muted-foreground hidden sm:inline">Specific Date:</span>
+                <input
+                  type="date"
+                  value={selectedDateForPlayers}
+                  max={userBetStats?.todayStr}
+                  onChange={(e) => setSelectedDateForPlayers(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-foreground focus:outline-none cursor-pointer"
+                  title="Check specific date bet for players"
+                />
+                {selectedDateForPlayers && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDateForPlayers("")}
+                    className="ml-1 text-[11px] text-muted-foreground hover:text-foreground font-bold px-1"
+                    title="Clear date"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Search User */}
+              <div className="relative min-w-[200px]">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search email or username…"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  className="pl-8 h-9 text-xs"
+                />
+              </div>
             </div>
           </div>
 
@@ -445,6 +482,11 @@ function Admin() {
                   <th>Balance (₹)</th>
                   <th>Today's Bet (₹)</th>
                   <th>Yesterday's Bet (₹)</th>
+                  {selectedDateForPlayers &&
+                    selectedDateForPlayers !== userBetStats?.todayStr &&
+                    selectedDateForPlayers !== userBetStats?.yesterdayStr && (
+                      <th className="text-accent">{selectedDateForPlayers} Bet (₹)</th>
+                    )}
                   <th>Joined Date</th>
                   <th className="text-right pr-4">Security Actions</th>
                 </tr>
@@ -489,6 +531,16 @@ function Admin() {
                         ₹{(userBetStats?.yesterdayMap[p.id] ?? 0).toLocaleString()}
                       </span>
                     </td>
+
+                    {selectedDateForPlayers &&
+                      selectedDateForPlayers !== userBetStats?.todayStr &&
+                      selectedDateForPlayers !== userBetStats?.yesterdayStr && (
+                        <td>
+                          <span className="font-semibold text-accent">
+                            ₹{(userBetStats?.customMap[p.id] ?? 0).toLocaleString()}
+                          </span>
+                        </td>
+                      )}
 
                     <td className="text-muted-foreground text-[11px]">{fmtIST(p.created_at)}</td>
 
@@ -552,7 +604,7 @@ function Admin() {
 
                 {filteredPlayers.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                    <td colSpan={selectedDateForPlayers ? 8 : 7} className="p-8 text-center text-muted-foreground">
                       No users found.
                     </td>
                   </tr>

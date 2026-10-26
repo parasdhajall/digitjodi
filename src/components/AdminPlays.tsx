@@ -9,20 +9,37 @@ import { gameLabel, fmtIST } from "@/lib/matka";
 type Market = { id: string; name: string };
 
 export function AdminPlays({ markets }: { markets: Market[] }) {
-  const [dateFilter, setDateFilter] = useState<"today" | "yesterday" | "all">("today");
+  const [dateFilter, setDateFilter] = useState<"today" | "yesterday" | "custom" | "all">("today");
+  const [customDate, setCustomDate] = useState<string>(() => {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+  });
   const [marketId, setMarketId] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
 
+  // Calculate IST Date strings for Today & Yesterday
+  const now = new Date();
+  const todayDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
+  const yesterdayDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(yesterdayDate);
+
+  const selectedTargetDate = dateFilter === "today" ? todayDateStr : dateFilter === "yesterday" ? yesterdayDateStr : customDate;
+
   const { data } = useQuery({
-    queryKey: ["admin-bets"],
+    queryKey: ["admin-bets", dateFilter, selectedTargetDate],
     refetchInterval: 10000,
     queryFn: async () => {
-      const { data: bets, error } = await supabase
-        .from("bets")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(1000);
+      let query = supabase.from("bets").select("*").order("created_at", { ascending: false });
+
+      if (dateFilter !== "all" && selectedTargetDate) {
+        const startIso = new Date(`${selectedTargetDate}T00:00:00+05:30`).toISOString();
+        const endIso = new Date(`${selectedTargetDate}T23:59:59.999+05:30`).toISOString();
+        query = query.gte("created_at", startIso).lte("created_at", endIso);
+      } else {
+        query = query.limit(1000);
+      }
+
+      const { data: bets, error } = await query;
       if (error) throw error;
 
       const ids = [...new Set(bets.map((b) => b.user_id))];
@@ -36,22 +53,15 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
 
   const marketName = (id: string) => markets.find((m) => m.id === id)?.name ?? "—";
 
-  // Calculate IST Date strings for Today & Yesterday
-  const now = new Date();
-  const todayDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
-  const yesterdayDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const yesterdayDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(yesterdayDate);
-
-  // 1. Filter by Date (Today, Yesterday, or All)
+  // 1. Filter by Date (Today, Yesterday, Custom Date, or All)
   const dateFilteredBets = useMemo(() => {
     if (!data) return [];
     if (dateFilter === "all") return data;
-    const targetDate = dateFilter === "today" ? todayDateStr : yesterdayDateStr;
     return data.filter((b) => {
       const bDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(b.created_at));
-      return bDate === targetDate;
+      return bDate === selectedTargetDate;
     });
-  }, [data, dateFilter, todayDateStr, yesterdayDateStr]);
+  }, [data, dateFilter, selectedTargetDate]);
 
   // 2. Filter by Market, Status, and Search
   const filteredBets = useMemo(() => {
@@ -85,7 +95,14 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
   const totalPoints = dateFilteredBets.reduce((s, b) => s + b.points, 0);
   const totalPayout = dateFilteredBets.reduce((s, b) => s + (b.payout || 0), 0);
   const totalUniquePlayers = new Set(dateFilteredBets.map((b) => b.user_id)).size;
-  const dateLabel = dateFilter === "today" ? "Today" : dateFilter === "yesterday" ? "Yesterday" : "All Time";
+  const dateLabel =
+    dateFilter === "today"
+      ? "Today"
+      : dateFilter === "yesterday"
+        ? "Yesterday"
+        : dateFilter === "custom"
+          ? customDate
+          : "All Time";
 
   return (
     <section className="space-y-4">
@@ -105,8 +122,8 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
             <span className="text-xs text-muted-foreground">({dateLabel})</span>
           </div>
 
-          {/* Quick Date Switcher: Today | Yesterday | All Time */}
-          <div className="flex items-center gap-1 rounded-lg border bg-secondary/80 p-1 text-xs">
+          {/* Quick Date Switcher: Today | Yesterday | Select Specific Date | All Time */}
+          <div className="flex flex-wrap items-center gap-1 rounded-lg border bg-secondary/80 p-1 text-xs">
             <button
               type="button"
               onClick={() => setDateFilter("today")}
@@ -129,6 +146,33 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
             >
               Yesterday
             </button>
+
+            {/* Specific Date Picker */}
+            <div
+              className={`flex items-center gap-1.5 rounded px-2.5 py-1 border transition-all ${
+                dateFilter === "custom"
+                  ? "bg-primary/20 border-primary text-foreground shadow-sm ring-1 ring-primary/40"
+                  : "border-border/60 bg-background/60 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Calendar className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span className="font-semibold text-[11px] hidden sm:inline">Date:</span>
+              <input
+                type="date"
+                value={customDate}
+                max={todayDateStr}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setCustomDate(e.target.value);
+                    setDateFilter("custom");
+                  }
+                }}
+                onClick={() => setDateFilter("custom")}
+                className="bg-transparent text-xs font-bold text-foreground focus:outline-none cursor-pointer"
+                title="Select specific date"
+              />
+            </div>
+
             <button
               type="button"
               onClick={() => setDateFilter("all")}
@@ -191,6 +235,7 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
                 setMarketId("all");
                 setStatusFilter("all");
                 setDateFilter("today");
+                setCustomDate(todayDateStr);
               }}
               className="text-xs h-9"
             >
