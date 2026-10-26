@@ -27,7 +27,7 @@ export const Route = createFileRoute("/play/$marketId")({
 });
 
 const ANK_LIST = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
-const POINT_PRESETS = [10, 20, 50, 100, 200, 500];
+const POINT_PRESETS = [5, 10, 20, 50, 100, 200, 500];
 
 function PlayPage() {
   const { marketId } = Route.useParams();
@@ -40,8 +40,8 @@ function PlayPage() {
   const [session, setSession] = useState<"open" | "close">("open");
   // Single selection only (no multi-select)
   const [selectedNumber, setSelectedNumber] = useState<string | null>(null);
-  // Default points starts from 10
-  const [points, setPoints] = useState<number>(10);
+  // Default points starts from 5
+  const [points, setPoints] = useState<number>(5);
   const [busy, setBusy] = useState(false);
 
   // Jodi Bulk state
@@ -112,7 +112,7 @@ function PlayPage() {
         });
         return next;
       } else {
-        setJodiPoints((pts) => ({ ...pts, [jodi]: pts[jodi] || points || 10 }));
+        setJodiPoints((pts) => ({ ...pts, [jodi]: pts[jodi] || points || 5 }));
         return [...prev, jodi];
       }
     });
@@ -136,7 +136,7 @@ function PlayPage() {
     setJodiPoints(updated);
   };
 
-  const totalJodiPoints = selectedJodis.reduce((sum, j) => sum + (jodiPoints[j] || 10), 0);
+  const totalJodiPoints = selectedJodis.reduce((sum, j) => sum + (jodiPoints[j] || 5), 0);
 
   // Ank Bulk helpers
   const setAnkPoint = (digit: number, pts: number) => {
@@ -156,7 +156,7 @@ function PlayPage() {
   };
 
   const activeAnkEntries = Object.entries(ankPoints)
-    .filter(([_, pts]) => typeof pts === "number" && pts >= 10)
+    .filter(([_, pts]) => typeof pts === "number" && pts >= 5)
     .map(([d, pts]) => ({ number: d, points: pts }));
 
   const totalAnkPoints = activeAnkEntries.reduce((sum, e) => sum + e.points, 0);
@@ -190,11 +190,11 @@ function PlayPage() {
       }
       const bets = selectedJodis.map((j) => ({
         number: j,
-        points: jodiPoints[j] || 10,
+        points: jodiPoints[j] || 5,
       }));
-      const anyInvalid = bets.some((b) => b.points < 10);
+      const anyInvalid = bets.some((b) => b.points < 5);
       if (anyInvalid) {
-        toast.error("Minimum points per Jodi is 10");
+        toast.error("Minimum points per Jodi is 5");
         return;
       }
       if (totalJodiPoints > userBalance) {
@@ -230,7 +230,7 @@ function PlayPage() {
         return;
       }
       if (activeAnkEntries.length === 0) {
-        toast.error("Please enter at least 10 points for one digit");
+        toast.error("Please enter at least 5 points for one digit");
         return;
       }
       if (totalAnkPoints > userBalance) {
@@ -303,8 +303,8 @@ function PlayPage() {
       return;
     }
 
-    if (points < 10) {
-      toast.error("Minimum bet is 10 points");
+    if (points < 5) {
+      toast.error("Minimum bet is 5 points");
       return;
     }
 
@@ -650,7 +650,7 @@ function PlayPage() {
               <h3 className="text-sm font-bold text-foreground">Enter Points Per Digit</h3>
               {/* Quick toolbar */}
               <div className="flex items-center gap-1">
-                {[10, 20, 50, 100].map((amt) => (
+                {[5, 10, 20, 50, 100].map((amt) => (
                   <button
                     key={amt}
                     type="button"
@@ -682,8 +682,8 @@ function PlayPage() {
                   {/* Points Input */}
                   <Input
                     type="number"
-                    min={10}
-                    step={10}
+                    min={5}
+                    step={5}
                     placeholder="Points"
                     value={ankPoints[digit] || ""}
                     onChange={(e) => setAnkPoint(digit, Number(e.target.value) || 0)}
@@ -737,7 +737,7 @@ function PlayPage() {
                   {/* Quick presets to apply to all selected */}
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] text-muted-foreground mr-0.5">All:</span>
-                    {[10, 20, 50, 100].map((amt) => (
+                    {[5, 10, 20, 50, 100].map((amt) => (
                       <button
                         key={amt}
                         type="button"
@@ -761,8 +761,8 @@ function PlayPage() {
                       {/* Points Input */}
                       <Input
                         type="number"
-                        min={10}
-                        step={10}
+                        min={5}
+                        step={5}
                         placeholder="Points"
                         value={jodiPoints[jodi] || ""}
                         onChange={(e) =>
@@ -904,16 +904,16 @@ function PlayPage() {
           ) : (
             /* C. STANDARD SINGLE / SANGAM BOTTOM BAR */
             <div className="space-y-2">
-              {/* Points Input & Quick Presets starting from 10 */}
+              {/* Points Input & Quick Presets starting from 5 */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs text-muted-foreground font-medium">Points:</span>
                   <Input
                     type="number"
-                    min={10}
-                    step={10}
+                    min={5}
+                    step={5}
                     value={points}
-                    onChange={(e) => setPoints(Math.max(10, Number(e.target.value) || 10))}
+                    onChange={(e) => setPoints(Math.max(5, Number(e.target.value) || 5))}
                     className="w-20 text-center font-bold text-sm h-8"
                   />
                 </div>

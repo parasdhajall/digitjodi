@@ -117,7 +117,7 @@ declare
   close_passed boolean;
 begin
   if auth.uid() is null then raise exception 'Not signed in'; end if;
-  if _points < 10 or _points > 10000 then raise exception 'Points must be between 10 and 10000'; end if;
+  if _points < 5 or _points > 10000 then raise exception 'Points must be between 5 and 10000'; end if;
   
   select * into m from public.markets where id=_market;
   if m.id is null or not m.active then raise exception 'Market closed'; end if;
