@@ -44,3 +44,89 @@ export const JODI_BY_ROW: Record<number, string[]> = {
   8: ["80", "81", "82", "83", "84", "85", "86", "87", "88", "89"],
   9: ["90", "91", "92", "93", "94", "95", "96", "97", "98", "99"],
 };
+
+// --- PANEL FAMILY / SET PANA (35 FAMILIES COVERING ALL 220 PANNAS) ---
+// Based on Indian Matka Cut digit rules (0↔5, 1↔6, 2↔7, 3↔8, 4↔9)
+export interface PanelFamily {
+  family: string;
+  pannas: string[];
+  count: number;
+}
+
+export function normalizePanna(panna: string): string {
+  const digits = panna.replace(/\D/g, "").slice(0, 3).split("");
+  digits.sort((a, b) => {
+    const va = a === "0" ? 10 : Number(a);
+    const vb = b === "0" ? 10 : Number(b);
+    return va - vb;
+  });
+  return digits.join("");
+}
+
+export const PANEL_FAMILIES_35: PanelFamily[] = [
+  { family: "111", pannas: ["111", "116", "166", "666"], count: 4 },
+  { family: "112", pannas: ["112", "117", "126", "167", "266", "667"], count: 6 },
+  { family: "113", pannas: ["113", "118", "136", "168", "366", "668"], count: 6 },
+  { family: "114", pannas: ["114", "119", "146", "169", "466", "669"], count: 6 },
+  { family: "115", pannas: ["115", "110", "156", "160", "566", "660"], count: 6 },
+  { family: "122", pannas: ["122", "127", "177", "226", "267", "677"], count: 6 },
+  { family: "123", pannas: ["123", "128", "137", "178", "236", "268", "367", "678"], count: 8 },
+  { family: "124", pannas: ["124", "129", "147", "179", "246", "269", "467", "679"], count: 8 },
+  { family: "125", pannas: ["125", "120", "157", "170", "256", "260", "567", "670"], count: 8 },
+  { family: "133", pannas: ["133", "138", "188", "336", "368", "688"], count: 6 },
+  { family: "134", pannas: ["134", "139", "148", "189", "346", "369", "468", "689"], count: 8 },
+  { family: "135", pannas: ["135", "130", "158", "180", "356", "360", "568", "680"], count: 8 },
+  { family: "144", pannas: ["144", "149", "199", "446", "469", "699"], count: 6 },
+  { family: "145", pannas: ["145", "140", "159", "190", "456", "460", "569", "690"], count: 8 },
+  { family: "155", pannas: ["155", "150", "100", "556", "560", "600"], count: 6 },
+  { family: "222", pannas: ["222", "227", "277", "777"], count: 4 },
+  { family: "223", pannas: ["223", "228", "237", "278", "377", "778"], count: 6 },
+  { family: "224", pannas: ["224", "229", "247", "279", "477", "779"], count: 6 },
+  { family: "225", pannas: ["225", "220", "257", "270", "577", "770"], count: 6 },
+  { family: "233", pannas: ["233", "238", "288", "337", "378", "788"], count: 6 },
+  { family: "234", pannas: ["234", "239", "248", "289", "347", "379", "478", "789"], count: 8 },
+  { family: "235", pannas: ["235", "230", "258", "280", "357", "370", "578", "780"], count: 8 },
+  { family: "244", pannas: ["244", "249", "299", "447", "479", "799"], count: 6 },
+  { family: "245", pannas: ["245", "240", "259", "290", "457", "470", "579", "790"], count: 8 },
+  { family: "255", pannas: ["255", "250", "200", "557", "570", "700"], count: 6 },
+  { family: "333", pannas: ["333", "338", "388", "888"], count: 4 },
+  { family: "334", pannas: ["334", "339", "348", "389", "488", "889"], count: 6 },
+  { family: "335", pannas: ["335", "330", "358", "380", "588", "880"], count: 6 },
+  { family: "344", pannas: ["344", "349", "399", "448", "489", "899"], count: 6 },
+  { family: "345", pannas: ["345", "340", "359", "390", "458", "480", "589", "890"], count: 8 },
+  { family: "355", pannas: ["355", "350", "300", "558", "580", "800"], count: 6 },
+  { family: "444", pannas: ["444", "449", "499", "999"], count: 4 },
+  { family: "445", pannas: ["445", "440", "459", "490", "599", "990"], count: 6 },
+  { family: "455", pannas: ["455", "450", "400", "559", "590", "900"], count: 6 },
+  { family: "555", pannas: ["555", "550", "500", "000"], count: 4 },
+];
+
+export const PANNA_TO_FAMILY_MAP = new Map<string, PanelFamily>();
+for (const fam of PANEL_FAMILIES_35) {
+  for (const p of fam.pannas) {
+    PANNA_TO_FAMILY_MAP.set(p, fam);
+  }
+}
+
+export function findFamilyByPanna(input: string): PanelFamily | null {
+  if (!input || input.length < 3) return null;
+  const norm = normalizePanna(input);
+  return PANNA_TO_FAMILY_MAP.get(norm) ?? null;
+}
+
+export function getPannaTypeInfo(panna: string): {
+  gameType: "single_panna" | "double_panna" | "triple_panna";
+  label: string;
+  short: "SP" | "DP" | "TP";
+  rate: number;
+} {
+  const distinct = new Set(panna.split("")).size;
+  if (distinct === 1) {
+    return { gameType: "triple_panna", label: "Triple Panna", short: "TP", rate: 600 };
+  }
+  if (distinct === 2) {
+    return { gameType: "double_panna", label: "Double Panna", short: "DP", rate: 280 };
+  }
+  return { gameType: "single_panna", label: "Single Panna", short: "SP", rate: 140 };
+}
+

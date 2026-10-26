@@ -2,7 +2,7 @@ import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Calendar, Clock, X, ShoppingBag, Trash2, Plus, CheckCircle2, Printer } from "lucide-react";
+import { ArrowLeft, Calendar, Clock, X, ShoppingBag, Trash2, Plus, CheckCircle2, Printer, Layers, Sparkles, Table, Check, Search, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,6 +11,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ThermalReceiptModal } from "@/components/ThermalReceiptModal";
 import { PrinterStatusBadge } from "@/components/PrinterStatusBadge";
 import {
@@ -27,6 +33,11 @@ import {
   TRIPLE_PANNAS,
   SINGLE_DIGITS,
   JODI_BY_ROW,
+  PANEL_FAMILIES_35,
+  findFamilyByPanna,
+  normalizePanna,
+  getPannaTypeInfo,
+  type PanelFamily,
 } from "@/lib/pannaChartData";
 
 export const Route = createFileRoute("/play/$marketId")({
@@ -86,6 +97,13 @@ function PlayPage() {
   const [sangamPart1, setSangamPart1] = useState("");
   const [sangamPart2, setSangamPart2] = useState("");
 
+  // Family Panna state
+  const [familyInput, setFamilyInput] = useState("");
+  const [activeFamily, setActiveFamily] = useState<PanelFamily | null>(null);
+  const [selectedFamilyPannas, setSelectedFamilyPannas] = useState<string[]>([]);
+  const [isFamilyChartOpen, setIsFamilyChartOpen] = useState(false);
+  const [familyChartSearch, setFamilyChartSearch] = useState("");
+
   const { data: m } = useQuery({
     queryKey: ["market", marketId],
     queryFn: async () => (await supabase.from("markets").select("*").eq("id", marketId).single()).data,
@@ -120,6 +138,9 @@ function PlayPage() {
     setAnkPoints({});
     setSangamPart1("");
     setSangamPart2("");
+    setFamilyInput("");
+    setActiveFamily(null);
+    setSelectedFamilyPannas([]);
   };
 
   const selectNumber = (num: string) => {
@@ -388,6 +409,85 @@ function PlayPage() {
     return ok;
   };
 
+  // Family Panna helpers & bucket action
+  const handleFamilyInputChange = (val: string) => {
+    const cleaned = val.replace(/\D/g, "").slice(0, 3);
+    setFamilyInput(cleaned);
+    if (cleaned.length === 3) {
+      const fam = findFamilyByPanna(cleaned);
+      if (fam) {
+        setActiveFamily(fam);
+        setSelectedFamilyPannas(fam.pannas);
+      } else {
+        setActiveFamily(null);
+        setSelectedFamilyPannas([]);
+      }
+    } else if (cleaned.length === 0) {
+      setActiveFamily(null);
+      setSelectedFamilyPannas([]);
+    }
+  };
+
+  const selectFamily = (fam: PanelFamily) => {
+    setActiveFamily(fam);
+    setFamilyInput(fam.family);
+    setSelectedFamilyPannas(fam.pannas);
+  };
+
+  const toggleFamilyPanna = (p: string) => {
+    setSelectedFamilyPannas((prev) =>
+      prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
+    );
+  };
+
+  const selectAllFamilyPannas = () => {
+    if (activeFamily) {
+      setSelectedFamilyPannas(activeFamily.pannas);
+    }
+  };
+
+  const deselectAllFamilyPannas = () => {
+    setSelectedFamilyPannas([]);
+  };
+
+  const totalFamilyPoints = selectedFamilyPannas.length * points;
+
+  const handleAddFamilyToBucket = (): boolean => {
+    if (marketClosed) {
+      toast.error(`Market has closed for today (${m?.name} closed at ${fmtTime(m?.close_time || "")})`);
+      return false;
+    }
+    if (effSession === "open" && openClosed) {
+      toast.error(`Open session has closed for ${m?.name} (${fmtTime(m?.open_time || "")}).`);
+      return false;
+    }
+    if (!activeFamily || selectedFamilyPannas.length === 0) {
+      toast.error("Please enter a 3-digit Panna or select a Family");
+      return false;
+    }
+    if (points < 5) {
+      toast.error("Minimum bet per Panna is ₹5");
+      return false;
+    }
+
+    const bets = selectedFamilyPannas.map((p) => {
+      const info = getPannaTypeInfo(p);
+      return {
+        game: info.gameType as GameType,
+        gameLabel: `Family (${info.short})`,
+        session: effSession,
+        number: p,
+        points: points,
+      };
+    });
+
+    const ok = addToBucket(bets);
+    if (ok) {
+      toast.success(`Added ${bets.length} Family Pannas to Bucket (₹${bets.length * points})`);
+    }
+    return ok;
+  };
+
   // Confirm and Place All Bucket Bets
   const handleConfirmBucket = async () => {
     if (!user) {
@@ -407,7 +507,14 @@ function PlayPage() {
     }
 
     const betsPayload = bucket.map((item) => ({
-      game: item.game === "jodi_bulk" ? "jodi" : item.game === "ank_bulk" ? "single" : item.game,
+      game:
+        item.game === "jodi_bulk"
+          ? "jodi"
+          : item.game === "ank_bulk"
+            ? "single"
+            : (item.game as string) === "family_panna"
+              ? getPannaTypeInfo(item.number).gameType
+              : item.game,
       session: item.session,
       number: item.number,
       points: item.points,
@@ -528,6 +635,18 @@ function PlayPage() {
       return;
     }
 
+    if (game === "family_panna") {
+      if (activeFamily && selectedFamilyPannas.length > 0) {
+        const ok = handleAddFamilyToBucket();
+        if (ok) setIsBucketOpen(true);
+      } else if (bucket.length > 0) {
+        setIsBucketOpen(true);
+      } else {
+        toast.error("Please enter a 3-digit Panna or select a Family first");
+      }
+      return;
+    }
+
     if (selectedNumber || game.includes("sangam")) {
       const ok = handleSingleAddToBucket();
       if (ok) setIsBucketOpen(true);
@@ -640,7 +759,9 @@ function PlayPage() {
               ? `ANK ${effSession.toUpperCase()} BULK`
               : game === "jodi_bulk"
                 ? "JODI BULK"
-                : GAMES[game].label}
+                : game === "family_panna"
+                  ? `FAMILY PANNA (${effSession.toUpperCase()})`
+                  : GAMES[game].label}
           </h2>
         </div>
 
@@ -695,7 +816,7 @@ function PlayPage() {
         )}
 
         {/* Section Header: "Select Panna" + Multiplier Badge (only for standard single games) */}
-        {game !== "jodi_bulk" && game !== "ank_bulk" && (
+        {game !== "jodi_bulk" && game !== "ank_bulk" && game !== "family_panna" && (
           <div className="flex items-center justify-between border-b pb-2.5">
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-foreground">
@@ -826,6 +947,198 @@ function PlayPage() {
                 </button>
               );
             })}
+          </div>
+        )}
+
+        {/* 3.1 FAMILY PANNA / SET PANA (35 Families) */}
+        {game === "family_panna" && (
+          <div className="space-y-4">
+            {/* Search or Enter Panna Card */}
+            <div className="rounded-xl border border-primary/30 bg-primary/5 p-3.5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-primary uppercase tracking-wide">
+                  <Sparkles className="h-4 w-4 text-gold" />
+                  <span>Enter Panna or Pick Family</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsFamilyChartOpen(true)}
+                  className="flex items-center gap-1 text-xs font-bold text-gold hover:underline"
+                >
+                  <Table className="h-3.5 w-3.5" /> 35 Families Chart
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={3}
+                    placeholder="Enter 3-Digit Panna (e.g. 128)"
+                    value={familyInput}
+                    onChange={(e) => handleFamilyInputChange(e.target.value)}
+                    className="font-mono text-center text-lg font-bold tracking-widest h-11 bg-background"
+                  />
+                  {familyInput && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFamilyInput("");
+                        setActiveFamily(null);
+                        setSelectedFamilyPannas([]);
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                {activeFamily && (
+                  <div className="rounded-xl border border-gold/40 bg-gold/15 px-3 py-2 text-center shrink-0">
+                    <span className="block text-[10px] uppercase font-bold text-muted-foreground">Family</span>
+                    <strong className="font-mono text-base font-black text-gold">{activeFamily.family}</strong>
+                  </div>
+                )}
+              </div>
+
+              {/* Quick 35 Families Chips Scroll */}
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground font-semibold px-0.5">
+                  <span>Quick Pick from 35 Families:</span>
+                  <span className="text-[10px] text-muted-foreground">Tap to select</span>
+                </div>
+                <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-1">
+                  {PANEL_FAMILIES_35.map((fam) => {
+                    const isFamActive = activeFamily?.family === fam.family;
+                    return (
+                      <button
+                        key={fam.family}
+                        type="button"
+                        onClick={() => selectFamily(fam)}
+                        className={`rounded-lg px-2.5 py-1.5 font-mono text-xs font-bold shrink-0 transition-all ${
+                          isFamActive
+                            ? "bg-primary text-primary-foreground ring-2 ring-primary shadow-md scale-105"
+                            : "border bg-card text-foreground hover:border-primary hover:bg-secondary"
+                        }`}
+                      >
+                        {fam.family}
+                        <span className="ml-1 text-[10px] opacity-75">({fam.count})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Active Family Members View */}
+            {activeFamily ? (
+              <div className="rounded-xl border border-border/80 bg-background/50 p-3 space-y-3">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-display text-lg font-bold text-foreground">
+                      Family <strong className="font-mono text-gold">{activeFamily.family}</strong>
+                    </span>
+                    <span className="rounded-md border bg-secondary px-2 py-0.5 text-xs font-bold text-gold">
+                      {selectedFamilyPannas.length} / {activeFamily.count} Selected
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={selectAllFamilyPannas}
+                      className="font-semibold text-primary hover:underline"
+                    >
+                      All
+                    </button>
+                    <span className="text-muted-foreground">•</span>
+                    <button
+                      type="button"
+                      onClick={deselectAllFamilyPannas}
+                      className="font-semibold text-muted-foreground hover:text-foreground"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                {/* Pannas Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {activeFamily.pannas.map((p) => {
+                    const isSelected = selectedFamilyPannas.includes(p);
+                    const info = getPannaTypeInfo(p);
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => toggleFamilyPanna(p)}
+                        className={`flex items-center justify-between rounded-xl p-2.5 transition-all text-left border ${
+                          isSelected
+                            ? "border-primary bg-primary/10 shadow-sm ring-1 ring-primary"
+                            : "border-border/60 bg-card/60 opacity-60 hover:opacity-100"
+                        }`}
+                      >
+                        <div>
+                          <span className="font-mono text-base font-bold tracking-wider block text-foreground">
+                            {p}
+                          </span>
+                          <span className="text-[10px] font-semibold text-muted-foreground">
+                            {info.short} · {info.rate}×
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-bold text-gold">₹{points}</span>
+                          <div
+                            className={`flex h-5 w-5 items-center justify-center rounded-md border text-[11px] font-bold ${
+                              isSelected
+                                ? "bg-primary border-primary text-primary-foreground"
+                                : "border-muted-foreground/40 bg-secondary"
+                            }`}
+                          >
+                            {isSelected ? <Check className="h-3 w-3 stroke-[3]" /> : null}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Summary calculation */}
+                <div className="flex items-center justify-between text-xs pt-1 px-1 text-muted-foreground">
+                  <span>
+                    {selectedFamilyPannas.length} Pannas × ₹{points} each
+                  </span>
+                  <span className="font-bold text-foreground">
+                    Family Total: <strong className="text-gold font-mono text-sm">₹{totalFamilyPoints}</strong>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              /* Helpful Guide Banner when no family chosen yet */
+              <div className="rounded-xl border border-dashed border-border p-5 text-center space-y-2 bg-secondary/30">
+                <div className="flex justify-center">
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                    <Layers className="h-5 w-5" />
+                  </div>
+                </div>
+                <h3 className="font-bold text-sm text-foreground">How Family Panna (सेट पाना) Works</h3>
+                <p className="text-xs text-muted-foreground max-w-sm mx-auto leading-relaxed">
+                  Enter any 3-digit panna (e.g. <strong>128</strong>) or pick a family above. The system automatically selects all cut-digit variations in that family (e.g. 123, 128, 137, 178, 236, 268, 367, 678) for Open or Close play!
+                </p>
+                <div className="pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => selectFamily(PANEL_FAMILIES_35[6]) /* 123 */}
+                    className="text-xs font-semibold"
+                  >
+                    Try Example Family: 123 (8 Pannas)
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1199,6 +1512,98 @@ function PlayPage() {
                 </div>
               )}
             </div>
+          ) : game === "family_panna" ? (
+            /* B.2 FAMILY PANNA BOTTOM BAR */
+            <div className="space-y-2">
+              {/* Points Input & Quick Presets */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground font-medium">Per Panna:</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-sm font-bold text-gold">₹</span>
+                    <Input
+                      type="number"
+                      min={5}
+                      step={5}
+                      value={points}
+                      onChange={(e) => setPoints(Math.max(5, Number(e.target.value) || 5))}
+                      className="w-20 text-center font-bold text-sm h-8"
+                    />
+                  </div>
+                </div>
+
+                {/* Quick amount chips */}
+                <div className="flex gap-1 overflow-x-auto">
+                  {POINT_PRESETS.map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setPoints(amt)}
+                      className={`rounded-md px-2.5 py-1 text-xs font-semibold border transition-colors ${
+                        points === amt
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-card hover:bg-secondary text-foreground"
+                      }`}
+                    >
+                      ₹{amt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {activeFamily && selectedFamilyPannas.length > 0 && (
+                <div className="flex items-center justify-between text-xs px-1">
+                  <span className="text-muted-foreground">
+                    Playing: <strong className="text-foreground">{selectedFamilyPannas.length} Pannas</strong> ({effSession.toUpperCase()})
+                  </span>
+                  <span className="font-semibold text-gold">
+                    Total: <strong>₹{totalFamilyPoints}</strong> ({selectedFamilyPannas.length} × ₹{points})
+                  </span>
+                </div>
+              )}
+
+              {marketClosed ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Market Closed for Today
+                </Button>
+              ) : effSession === "open" && openClosed ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Open Session Closed
+                </Button>
+              ) : !activeFamily || selectedFamilyPannas.length === 0 ? (
+                <div className="flex gap-2">
+                  <Button disabled className="flex-1 h-11 text-xs font-semibold rounded-xl bg-muted text-muted-foreground">
+                    Enter panna or select a family
+                  </Button>
+                  {bucket.length > 0 && (
+                    <Button
+                      type="button"
+                      onClick={() => setIsBucketOpen(true)}
+                      className="h-11 px-4 text-xs font-bold rounded-xl bg-gold text-slate-950 hover:bg-gold/90 shadow-sm"
+                    >
+                      <ShoppingBag className="h-4 w-4 mr-1.5" /> Bucket ({bucket.length})
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    onClick={handleAddFamilyToBucket}
+                    className="flex-1 h-11 text-xs font-bold rounded-xl border border-gold/40 bg-gold/10 hover:bg-gold/20 text-gold"
+                  >
+                    <Plus className="h-4 w-4 mr-1" /> Add Family ({selectedFamilyPannas.length}) to Bucket
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handlePlay}
+                    className="flex-1 h-11 text-xs font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
+                  >
+                    Confirm & Review (₹{totalFamilyPoints})
+                  </Button>
+                </div>
+              )}
+            </div>
           ) : (
             /* C. STANDARD SINGLE / SANGAM BOTTOM BAR */
             <div className="space-y-2">
@@ -1443,6 +1848,94 @@ function PlayPage() {
         onOpenChange={setIsReceiptOpen}
         receiptData={receiptData}
       />
+
+      {/* 35 PANEL FAMILIES BROWSER MODAL (Reference: matkaguessing.in/panel-family-chart) */}
+      <Dialog open={isFamilyChartOpen} onOpenChange={setIsFamilyChartOpen}>
+        <DialogContent className="max-w-md max-h-[85vh] flex flex-col p-4 bg-card">
+          <DialogHeader className="pb-2 border-b">
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-foreground">
+              <Table className="h-5 w-5 text-gold" />
+              <span>35 Panel Families Chart (फैमिली पाना)</span>
+            </DialogTitle>
+            <p className="text-xs text-muted-foreground">
+              All 220 pannas grouped into 35 families. Tap any family to load all its pannas instantly.
+            </p>
+          </DialogHeader>
+
+          <div className="py-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search any Panna or Family (e.g. 128, 123)..."
+                value={familyChartSearch}
+                onChange={(e) => setFamilyChartSearch(e.target.value)}
+                className="pl-9 text-xs h-9"
+              />
+              {familyChartSearch && (
+                <button
+                  type="button"
+                  onClick={() => setFamilyChartSearch("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto space-y-2 pr-1 divide-y divide-border/60">
+            {PANEL_FAMILIES_35.filter((fam) => {
+              if (!familyChartSearch) return true;
+              const q = familyChartSearch.trim();
+              return (
+                fam.family.includes(q) ||
+                fam.pannas.some((p) => p.includes(q))
+              );
+            }).map((fam) => (
+              <div
+                key={fam.family}
+                className="pt-2 first:pt-0 flex items-center justify-between gap-3 hover:bg-secondary/60 p-2 rounded-lg transition-colors cursor-pointer"
+                onClick={() => {
+                  selectFamily(fam);
+                  setIsFamilyChartOpen(false);
+                }}
+              >
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-black text-gold">Family {fam.family}</span>
+                    <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+                      {fam.count} Pannas
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {fam.pannas.map((p) => (
+                      <span
+                        key={p}
+                        className={`font-mono text-xs px-1.5 py-0.5 rounded border ${
+                          familyChartSearch && p.includes(familyChartSearch)
+                            ? "bg-gold text-slate-950 font-bold border-gold"
+                            : "bg-background border-border/70 text-foreground"
+                        }`}
+                      >
+                        {p}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  className="shrink-0 h-8 text-xs font-bold bg-primary text-primary-foreground"
+                >
+                  Select
+                </Button>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

@@ -17,6 +17,7 @@ export const GAMES = {
   single_panna: { label: "Single Panna", parts: [3], partLabels: ["Panna (3 different digits)"], rate: 140, closeOnly: false },
   double_panna: { label: "Double Panna", parts: [3], partLabels: ["Panna (two same digits)"], rate: 280, closeOnly: false },
   triple_panna: { label: "Triple Panna", parts: [3], partLabels: ["Panna (all same digits)"], rate: 600, closeOnly: false },
+  family_panna: { label: "Family Panna", parts: [3], partLabels: ["Panna"], rate: 140, closeOnly: false, isBulk: true },
   half_sangam: { label: "Half Sangam", parts: [1, 3], partLabels: ["Open digit", "Close panna"], rate: 1000, closeOnly: true },
   full_sangam: { label: "Full Sangam", parts: [3, 3], partLabels: ["Open panna", "Close panna"], rate: 10000, closeOnly: true },
   panna: { label: "Panna", parts: [3], partLabels: ["Panna"], rate: 140, closeOnly: false, legacy: true },
