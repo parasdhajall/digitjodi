@@ -73,8 +73,8 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
       {/* Overview Stats */}
       <div className="grid gap-3 sm:grid-cols-4">
         <Stat label="Total Plays" value={data?.length ?? 0} />
-        <Stat label="Total Points Played" value={totalPoints} unit="pts" />
-        <Stat label="Total Payouts Won" value={totalPayout} unit="pts" />
+        <Stat label="Total Amount Played" value={totalPoints} unit="₹" />
+        <Stat label="Total Payouts Won" value={totalPayout} unit="₹" />
         <Stat label="Active Players" value={totalUniquePlayers} />
       </div>
 
@@ -164,7 +164,7 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="font-semibold text-xs">{t.points} pts</div>
+                  <div className="font-semibold text-xs">₹{t.points}</div>
                   <div className="text-[11px] text-muted-foreground">{t.count} plays</div>
                 </div>
               </div>
@@ -183,9 +183,9 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
               <th>Market</th>
               <th>Game</th>
               <th>Number</th>
-              <th>Points</th>
+              <th>Amount (₹)</th>
               <th>Status</th>
-              <th className="pr-3">Payout</th>
+              <th className="pr-3">Payout (₹)</th>
             </tr>
           </thead>
           <tbody>
@@ -216,14 +216,14 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
                     </span>
                   </td>
                   <td className="font-display text-lg tracking-widest text-primary font-bold">{b.number}</td>
-                  <td className="font-semibold">{b.points} pts</td>
+                  <td className="font-semibold">₹{b.points}</td>
                   <td>
                     <span className={`rounded-full px-2 py-0.5 text-[11px] uppercase ${statusBadge}`}>
                       {b.status}
                     </span>
                   </td>
                   <td className="pr-3 font-semibold text-gold">
-                    {b.payout > 0 ? `+${b.payout} pts` : "—"}
+                    {b.payout > 0 ? `+₹${b.payout}` : "—"}
                   </td>
                 </tr>
               );
@@ -247,7 +247,9 @@ function Stat({ label, value, unit }: { label: string; value: number; unit?: str
     <div className="rounded-xl border bg-card p-4">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 font-display text-3xl tracking-wide text-foreground">
-        {value.toLocaleString()} {unit && <span className="text-xs text-gold font-sans">{unit}</span>}
+        {unit === "₹" && <span className="text-gold font-sans mr-0.5">₹</span>}
+        {value.toLocaleString()}
+        {unit && unit !== "₹" && <span className="text-xs text-gold font-sans ml-1">{unit}</span>}
       </div>
     </div>
   );

@@ -57,7 +57,7 @@ function History() {
       <div className="overflow-hidden rounded-xl border bg-card">
         <table className="w-full text-sm">
           <thead className="bg-secondary text-left text-muted-foreground">
-            <tr><th className="p-3">Market</th><th>Game</th><th>Number</th><th>Points</th><th>Result</th></tr>
+            <tr><th className="p-3">Market</th><th>Game</th><th>Number</th><th>Rupees (₹)</th><th>Result</th></tr>
           </thead>
           <tbody>
             {data?.map((b) => (
@@ -65,8 +65,8 @@ function History() {
                 <td className="p-3">{b.markets?.name}<div className="text-xs text-muted-foreground">{fmtIST(b.created_at)} IST</div></td>
                 <td>{gameLabel(b.game_type)} <span className="text-xs capitalize text-muted-foreground">{b.session}</span></td>
                 <td className="font-display text-xl tracking-widest">{b.number}</td>
-                <td>{b.points}</td>
-                <td className={`font-semibold capitalize ${statusCls[b.status]}`}>{b.status}{b.payout > 0 && ` +${b.payout}`}</td>
+                <td className="font-semibold text-foreground">₹{b.points}</td>
+                <td className={`font-semibold capitalize ${statusCls[b.status]}`}>{b.status}{b.payout > 0 && ` +₹${b.payout}`}</td>
               </tr>
             ))}
             {data?.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">No plays yet.</td></tr>}

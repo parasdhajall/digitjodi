@@ -2,11 +2,11 @@ import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Calendar, Clock, X, Coins } from "lucide-react";
+import { ArrowLeft, Calendar, Clock, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth, useProfile } from "@/hooks/useAuth";
+import { useAuth, useProfile, useTodayExpense } from "@/hooks/useAuth";
 import { GAMES, PLAYABLE, type GameType, fmtTime, resultLabel, isOpenPast, isClosePast } from "@/lib/matka";
 import {
   SINGLE_PANNA_BY_ANK,
@@ -34,6 +34,7 @@ function PlayPage() {
   const navigate = useNavigate();
   const { user, loading } = useAuth();
   const { data: profile } = useProfile(user?.id);
+  const { data: todayExp } = useTodayExpense(user?.id);
   const qc = useQueryClient();
 
   const [game, setGame] = useState<GameType>("single_panna");
@@ -194,11 +195,11 @@ function PlayPage() {
       }));
       const anyInvalid = bets.some((b) => b.points < 5);
       if (anyInvalid) {
-        toast.error("Minimum points per Jodi is 5");
+        toast.error("Minimum bet per Jodi is ₹5");
         return;
       }
       if (totalJodiPoints > userBalance) {
-        toast.error(`Not enough points. Required: ${totalJodiPoints} pts, Your balance: ${userBalance} pts`);
+        toast.error(`Not enough balance. Required: ₹${totalJodiPoints}`);
         return;
       }
 
@@ -216,10 +217,11 @@ function PlayPage() {
         return;
       }
 
-      toast.success(`Success! Placed ${bets.length} Jodi bets on ${m?.name} (Total ${totalJodiPoints} pts)!`);
+      toast.success(`Success! Placed ${bets.length} Jodi bets on ${m?.name} (Total ₹${totalJodiPoints})!`);
       setSelectedJodis([]);
       setJodiPoints({});
       qc.invalidateQueries({ queryKey: ["profile"] });
+      qc.invalidateQueries({ queryKey: ["today-expense"] });
       return;
     }
 
@@ -230,11 +232,11 @@ function PlayPage() {
         return;
       }
       if (activeAnkEntries.length === 0) {
-        toast.error("Please enter at least 5 points for one digit");
+        toast.error("Please enter at least ₹5 for one digit");
         return;
       }
       if (totalAnkPoints > userBalance) {
-        toast.error(`Not enough points. Required: ${totalAnkPoints} pts, Your balance: ${userBalance} pts`);
+        toast.error(`Not enough balance. Required: ₹${totalAnkPoints}`);
         return;
       }
 
@@ -253,10 +255,11 @@ function PlayPage() {
       }
 
       toast.success(
-        `Success! Placed ${activeAnkEntries.length} Ank bets (${effSession.toUpperCase()}) on ${m?.name} (Total ${totalAnkPoints} pts)!`
+        `Success! Placed ${activeAnkEntries.length} Ank bets (${effSession.toUpperCase()}) on ${m?.name} (Total ₹${totalAnkPoints})!`
       );
       setAnkPoints({});
       qc.invalidateQueries({ queryKey: ["profile"] });
+      qc.invalidateQueries({ queryKey: ["today-expense"] });
       return;
     }
 
@@ -280,10 +283,11 @@ function PlayPage() {
         toast.error(error.message);
         return;
       }
-      toast.success(`Bet placed on Sangam: ${num} for ${points} pts!`);
+      toast.success(`Bet placed on Sangam: ${num} for ₹${points}!`);
       setSangamPart1("");
       setSangamPart2("");
       qc.invalidateQueries({ queryKey: ["profile"] });
+      qc.invalidateQueries({ queryKey: ["today-expense"] });
       return;
     }
 
@@ -304,12 +308,12 @@ function PlayPage() {
     }
 
     if (points < 5) {
-      toast.error("Minimum bet is 5 points");
+      toast.error("Minimum bet is ₹5");
       return;
     }
 
     if (points > userBalance) {
-      toast.error(`Not enough points. Required: ${points} pts, Your balance: ${userBalance} pts`);
+      toast.error(`Not enough balance. Required: ₹${points}`);
       return;
     }
 
@@ -328,9 +332,10 @@ function PlayPage() {
       return;
     }
 
-    toast.success(`Success! Played ${selectedNumber} on ${m?.name} (${effSession.toUpperCase()}) for ${points} pts!`);
+    toast.success(`Success! Played ${selectedNumber} on ${m?.name} (${effSession.toUpperCase()}) for ₹${points}!`);
     setSelectedNumber(null);
     qc.invalidateQueries({ queryKey: ["profile"] });
+    qc.invalidateQueries({ queryKey: ["today-expense"] });
   };
 
   if (!m) return <main className="mx-auto max-w-lg p-8 text-center text-muted-foreground">Loading…</main>;
@@ -349,9 +354,9 @@ function PlayPage() {
 
           <h1 className="font-display text-2xl tracking-wider text-gold">{m.name}</h1>
 
-          <div className="flex items-center gap-1 text-xs font-bold text-primary">
-            <Coins className="h-3.5 w-3.5" />
-            <span>{userBalance.toLocaleString()} pts</span>
+          <div className="flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary" title="Today's Expense">
+            <span className="text-[10px] uppercase font-bold text-muted-foreground">Today's Bet:</span>
+            <span className="font-bold text-foreground">₹{todayExp?.totalExpense ?? 0}</span>
           </div>
         </div>
 
@@ -647,7 +652,7 @@ function PlayPage() {
         {game === "ank_bulk" && (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-foreground">Enter Points Per Digit</h3>
+              <h3 className="text-sm font-bold text-foreground">Enter Amount (₹) Per Digit</h3>
               {/* Quick toolbar */}
               <div className="flex items-center gap-1">
                 {[5, 10, 20, 50, 100].map((amt) => (
@@ -657,7 +662,7 @@ function PlayPage() {
                     onClick={() => fillAllAnkPoints(amt)}
                     className="rounded border bg-secondary px-2 py-0.5 text-[10px] font-semibold hover:bg-primary hover:text-primary-foreground transition-colors"
                   >
-                    +{amt} All
+                    +₹{amt} All
                   </button>
                 ))}
                 <button
@@ -679,12 +684,12 @@ function PlayPage() {
                     {digit}
                   </div>
 
-                  {/* Points Input */}
+                  {/* Amount Input */}
                   <Input
                     type="number"
                     min={5}
                     step={5}
-                    placeholder="Points"
+                    placeholder="₹ Amount"
                     value={ankPoints[digit] || ""}
                     onChange={(e) => setAnkPoint(digit, Number(e.target.value) || 0)}
                     className="h-11 flex-1 font-semibold text-sm bg-secondary/40"
@@ -744,7 +749,7 @@ function PlayPage() {
                         onClick={() => setAllJodiPoints(amt)}
                         className="rounded border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold hover:bg-primary hover:text-primary-foreground transition-colors"
                       >
-                        {amt}
+                        ₹{amt}
                       </button>
                     ))}
                   </div>
@@ -758,12 +763,12 @@ function PlayPage() {
                         {jodi}
                       </div>
 
-                      {/* Points Input */}
+                      {/* Amount Input */}
                       <Input
                         type="number"
                         min={5}
                         step={5}
-                        placeholder="Points"
+                        placeholder="₹ Amount"
                         value={jodiPoints[jodi] || ""}
                         onChange={(e) =>
                           setJodiPoints((pts) => ({
@@ -838,7 +843,7 @@ function PlayPage() {
                     Selected: <strong className="text-foreground">{selectedJodis.length} Jodis</strong>
                   </span>
                   <span className="font-semibold text-gold">
-                    Total: <strong>{totalJodiPoints} pts</strong> (Win Pays 90×)
+                    Total: <strong>₹{totalJodiPoints}</strong> (Win Pays 90×)
                   </span>
                 </div>
               )}
@@ -853,7 +858,7 @@ function PlayPage() {
                 </Button>
               ) : selectedJodis.length === 0 ? (
                 <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
-                  Select jodie and enter points
+                  Select jodis and enter amount (₹)
                 </Button>
               ) : (
                 <Button
@@ -861,7 +866,7 @@ function PlayPage() {
                   disabled={busy || totalJodiPoints === 0}
                   className="w-full h-11 text-sm font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
                 >
-                  {busy ? "Placing Plays…" : `Place Bets (${selectedJodis.length} Jodis · Total ${totalJodiPoints} pts)`}
+                  {busy ? "Placing Plays…" : `Place Bets (${selectedJodis.length} Jodis · Total ₹${totalJodiPoints})`}
                 </Button>
               )}
             </div>
@@ -874,7 +879,7 @@ function PlayPage() {
                     Playing: <strong className="text-foreground">{activeAnkEntries.length} Digits</strong> ({effSession.toUpperCase()})
                   </span>
                   <span className="font-semibold text-gold">
-                    Total: <strong>{totalAnkPoints} pts</strong> (Win Pays 9×)
+                    Total: <strong>₹{totalAnkPoints}</strong> (Win Pays 9×)
                   </span>
                 </div>
               )}
@@ -889,7 +894,7 @@ function PlayPage() {
                 </Button>
               ) : activeAnkEntries.length === 0 ? (
                 <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
-                  Place Bets
+                  Enter amount (₹) to place bets
                 </Button>
               ) : (
                 <Button
@@ -897,7 +902,7 @@ function PlayPage() {
                   disabled={busy}
                   className="w-full h-11 text-sm font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
                 >
-                  {busy ? "Placing Plays…" : `Place Bets (${activeAnkEntries.length} Digits · Total ${totalAnkPoints} pts)`}
+                  {busy ? "Placing Plays…" : `Place Bets (${activeAnkEntries.length} Digits · Total ₹${totalAnkPoints})`}
                 </Button>
               )}
             </div>
@@ -907,18 +912,21 @@ function PlayPage() {
               {/* Points Input & Quick Presets starting from 5 */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted-foreground font-medium">Points:</span>
-                  <Input
-                    type="number"
-                    min={5}
-                    step={5}
-                    value={points}
-                    onChange={(e) => setPoints(Math.max(5, Number(e.target.value) || 5))}
-                    className="w-20 text-center font-bold text-sm h-8"
-                  />
+                  <span className="text-xs text-muted-foreground font-medium">Amount:</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-sm font-bold text-gold">₹</span>
+                    <Input
+                      type="number"
+                      min={5}
+                      step={5}
+                      value={points}
+                      onChange={(e) => setPoints(Math.max(5, Number(e.target.value) || 5))}
+                      className="w-20 text-center font-bold text-sm h-8"
+                    />
+                  </div>
                 </div>
 
-                {/* Quick point chips starting at 10 */}
+                {/* Quick amount chips */}
                 <div className="flex gap-1 overflow-x-auto">
                   {POINT_PRESETS.map((amt) => (
                     <button
@@ -931,7 +939,7 @@ function PlayPage() {
                           : "bg-card hover:bg-secondary text-foreground"
                       }`}
                     >
-                      {amt}
+                      ₹{amt}
                     </button>
                   ))}
                 </div>
@@ -944,7 +952,7 @@ function PlayPage() {
                     Playing: <strong className="text-foreground">{selectedNumber}</strong> ({effSession.toUpperCase()})
                   </span>
                   <span className="font-semibold text-gold">
-                    Win Pays {winMultiplier}× = <strong>{potentialWin} pts</strong>
+                    Win Pays {winMultiplier}× = <strong>₹{potentialWin}</strong>
                   </span>
                 </div>
               )}
@@ -960,7 +968,7 @@ function PlayPage() {
                 </Button>
               ) : !selectedNumber && game !== "half_sangam" && game !== "full_sangam" ? (
                 <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
-                  Select panna and enter points
+                  Select number and enter amount (₹)
                 </Button>
               ) : (
                 <Button
@@ -971,8 +979,8 @@ function PlayPage() {
                   {busy
                     ? "Placing Play…"
                     : game.includes("sangam")
-                      ? `Play Sangam (${points} pts)`
-                      : `Play ${selectedNumber} (${points} pts)`}
+                      ? `Play Sangam (₹${points})`
+                      : `Play ${selectedNumber} (₹${points})`}
                 </Button>
               )}
             </div>

@@ -139,7 +139,7 @@ function Admin() {
       toast.error(error.message);
       return;
     }
-    toast.success(`Updated points by ${amount > 0 ? "+" + amount : amount} pts!`);
+    toast.success(`Updated balance by ${amount > 0 ? "+" + amount : amount} ₹!`);
     setPointAdjust({ ...pointAdjust, [userId]: "" });
     refresh();
   };
@@ -434,8 +434,8 @@ function Admin() {
                 <tr>
                   <th className="p-3">User / Email</th>
                   <th>Status</th>
-                  <th>Points Balance</th>
-                  <th>Today's Bet</th>
+                  <th>Balance (₹)</th>
+                  <th>Today's Bet (₹)</th>
                   <th>Joined Date</th>
                   <th className="text-right pr-4">Security Actions</th>
                 </tr>
@@ -465,7 +465,7 @@ function Admin() {
 
                     <td>
                       <span className="font-display text-lg tracking-wide text-gold">
-                        {p.points.toLocaleString()} pts
+                        ₹{p.points.toLocaleString()}
                       </span>
                     </td>
 
@@ -511,10 +511,10 @@ function Admin() {
                           )}
                         </Button>
 
-                        {/* Quick Points Adjust */}
+                        {/* Quick Balance Adjust */}
                         <div className="flex items-center gap-1 ml-2">
                           <Input
-                            placeholder="±pts"
+                            placeholder="±₹"
                             type="number"
                             value={pointAdjust[p.id] ?? ""}
                             onChange={(e) => setPointAdjust({ ...pointAdjust, [p.id]: e.target.value })}
@@ -525,7 +525,7 @@ function Admin() {
                             variant="secondary"
                             className="h-8 text-xs px-2.5"
                             onClick={() => handleAdjustPoints(p.id)}
-                            title="Add or subtract points"
+                            title="Add or subtract amount (₹)"
                           >
                             Update
                           </Button>
