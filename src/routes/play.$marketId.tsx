@@ -2,9 +2,15 @@ import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Calendar, Clock, X } from "lucide-react";
+import { ArrowLeft, Calendar, Clock, X, ShoppingBag, Trash2, Plus, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, useProfile, useTodayExpense } from "@/hooks/useAuth";
 import { GAMES, PLAYABLE, type GameType, fmtTime, resultLabel, isOpenPast, isClosePast } from "@/lib/matka";
@@ -29,6 +35,15 @@ export const Route = createFileRoute("/play/$marketId")({
 const ANK_LIST = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
 const POINT_PRESETS = [5, 10, 20, 50, 100, 200, 500];
 
+export type BucketItem = {
+  id: string;
+  game: GameType;
+  gameLabel: string;
+  session: "open" | "close";
+  number: string;
+  points: number;
+};
+
 function PlayPage() {
   const { marketId } = Route.useParams();
   const navigate = useNavigate();
@@ -44,6 +59,10 @@ function PlayPage() {
   // Default points starts from 5
   const [points, setPoints] = useState<number>(5);
   const [busy, setBusy] = useState(false);
+
+  // Bucket / Order Cart State
+  const [bucket, setBucket] = useState<BucketItem[]>([]);
+  const [isBucketOpen, setIsBucketOpen] = useState(false);
 
   // Jodi Bulk state
   const [selectedJodis, setSelectedJodis] = useState<string[]>([]);
@@ -162,11 +181,254 @@ function PlayPage() {
 
   const totalAnkPoints = activeAnkEntries.reduce((sum, e) => sum + e.points, 0);
 
-  const userBalance = profile?.points ?? 0;
   const winMultiplier = g.rate;
   const potentialWin = (points || 0) * winMultiplier;
 
-  // Place bet handler (supports Single, Sangam, Jodi Bulk, Ank Bulk)
+  // Total amount in the bucket
+  const totalBucketAmount = bucket.reduce((sum, item) => sum + item.points, 0);
+
+  // Helper to add items into Bucket
+  const addToBucket = (newItems: Omit<BucketItem, "id">[]): boolean => {
+    if (marketClosed) {
+      toast.error(`Market has closed for today (${m?.name} closed at ${fmtTime(m?.close_time || "")})`);
+      return false;
+    }
+
+    setBucket((prev) => {
+      const updated = [...prev];
+      for (const item of newItems) {
+        // Merge with existing item if same game, session, and number
+        const existingIdx = updated.findIndex(
+          (x) => x.game === item.game && x.session === item.session && x.number === item.number
+        );
+        if (existingIdx !== -1) {
+          updated[existingIdx] = {
+            ...updated[existingIdx],
+            points: updated[existingIdx].points + item.points,
+          };
+        } else {
+          updated.push({
+            ...item,
+            id: Math.random().toString(36).slice(2, 9),
+          });
+        }
+      }
+      return updated;
+    });
+
+    const addedCount = newItems.length;
+    const addedTotal = newItems.reduce((acc, x) => acc + x.points, 0);
+    toast.success(`🧺 Added ${addedCount} bet${addedCount > 1 ? "s" : ""} (₹${addedTotal}) to Bucket!`);
+    return true;
+  };
+
+  const removeFromBucket = (id: string) => {
+    setBucket((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const updateBucketItemPoints = (id: string, newPoints: number) => {
+    const safePts = Math.max(5, newPoints);
+    setBucket((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, points: safePts } : item))
+    );
+  };
+
+  const clearBucket = () => {
+    setBucket([]);
+    toast.info("Bucket cleared");
+  };
+
+  // Add Single / Panna / Sangam to Bucket
+  const handleSingleAddToBucket = (): boolean => {
+    if (marketClosed) {
+      toast.error(`Market has closed for today (${m?.name} closed at ${fmtTime(m?.close_time || "")})`);
+      return false;
+    }
+
+    if (game === "half_sangam" || game === "full_sangam") {
+      const num = `${sangamPart1}-${sangamPart2}`;
+      if (!sangamPart1 || !sangamPart2) {
+        toast.error("Please enter both parts for Sangam");
+        return false;
+      }
+      if (openClosed) {
+        toast.error("Sangam can only be played before Open timing.");
+        return false;
+      }
+      if (points < 5) {
+        toast.error("Minimum bet is ₹5");
+        return false;
+      }
+      const ok = addToBucket([
+        {
+          game,
+          gameLabel: g.label,
+          session: "close",
+          number: num,
+          points,
+        },
+      ]);
+      if (ok) {
+        setSangamPart1("");
+        setSangamPart2("");
+      }
+      return ok;
+    }
+
+    if (effSession === "open" && openClosed) {
+      toast.error(`Open session has closed for ${m?.name} (${fmtTime(m?.open_time || "")}).`);
+      return false;
+    }
+
+    if (g.closeOnly && openClosed) {
+      toast.error(`${g.label} can only be played before Open timing.`);
+      return false;
+    }
+
+    if (!selectedNumber) {
+      toast.error("Please select a number first");
+      return false;
+    }
+
+    if (points < 5) {
+      toast.error("Minimum bet is ₹5");
+      return false;
+    }
+
+    const ok = addToBucket([
+      {
+        game,
+        gameLabel: g.label,
+        session: effSession,
+        number: selectedNumber,
+        points,
+      },
+    ]);
+    if (ok) {
+      setSelectedNumber(null);
+    }
+    return ok;
+  };
+
+  // Add Jodi Bulk to Bucket
+  const handleAddJodiBulkToBucket = (): boolean => {
+    if (marketClosed) {
+      toast.error(`Market has closed for today (${m?.name} closed at ${fmtTime(m?.close_time || "")})`);
+      return false;
+    }
+    if (openClosed) {
+      toast.error(`Jodi Bulk is closed because Open timing (${fmtTime(m?.open_time || "")}) has passed.`);
+      return false;
+    }
+    if (selectedJodis.length === 0) {
+      toast.error("Please select at least one Jodi");
+      return false;
+    }
+
+    const bets = selectedJodis.map((j) => ({
+      game: "jodi" as GameType,
+      gameLabel: "Jodi",
+      session: "close" as const,
+      number: j,
+      points: jodiPoints[j] || 5,
+    }));
+
+    const anyInvalid = bets.some((b) => b.points < 5);
+    if (anyInvalid) {
+      toast.error("Minimum bet per Jodi is ₹5");
+      return false;
+    }
+
+    const ok = addToBucket(bets);
+    if (ok) {
+      setSelectedJodis([]);
+      setJodiPoints({});
+    }
+    return ok;
+  };
+
+  // Add Ank Bulk to Bucket
+  const handleAddAnkBulkToBucket = (): boolean => {
+    if (marketClosed) {
+      toast.error(`Market has closed for today (${m?.name} closed at ${fmtTime(m?.close_time || "")})`);
+      return false;
+    }
+    if (effSession === "open" && openClosed) {
+      toast.error(`Open session has closed for ${m?.name} (${fmtTime(m?.open_time || "")}).`);
+      return false;
+    }
+    if (activeAnkEntries.length === 0) {
+      toast.error("Please enter at least ₹5 for one digit");
+      return false;
+    }
+
+    const bets = activeAnkEntries.map((e) => ({
+      game: "single" as GameType,
+      gameLabel: "Single Digit",
+      session: effSession,
+      number: e.number,
+      points: e.points,
+    }));
+
+    const ok = addToBucket(bets);
+    if (ok) {
+      setAnkPoints({});
+    }
+    return ok;
+  };
+
+  // Confirm and Place All Bucket Bets
+  const handleConfirmBucket = async () => {
+    if (!user) {
+      toast.error("Please sign in to place plays");
+      navigate({ to: "/auth" });
+      return;
+    }
+
+    if (marketClosed) {
+      toast.error(`Market has closed for today (${m?.name} closed at ${fmtTime(m?.close_time || "")})`);
+      return;
+    }
+
+    if (bucket.length === 0) {
+      toast.error("Your bucket is empty. Add plays first.");
+      return;
+    }
+
+    const betsPayload = bucket.map((item) => ({
+      game: item.game === "jodi_bulk" ? "jodi" : item.game === "ank_bulk" ? "single" : item.game,
+      session: item.session,
+      number: item.number,
+      points: item.points,
+    }));
+
+    setBusy(true);
+    const { error } = await supabase.rpc("place_bucket_bets", {
+      _market: marketId,
+      _bets: betsPayload,
+    });
+    setBusy(false);
+
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+
+    const placedCount = bucket.length;
+    const placedTotal = totalBucketAmount;
+
+    toast.success(
+      `🎉 Success! Placed ${placedCount} bets on ${m?.name} (Total ₹${placedTotal})!`
+    );
+
+    setBucket([]);
+    setIsBucketOpen(false);
+    qc.invalidateQueries({ queryKey: ["profile"] });
+    qc.invalidateQueries({ queryKey: ["today-expense"] });
+    qc.invalidateQueries({ queryKey: ["market", marketId] });
+  };
+
+  // Play button handler: queues active selection into bucket and opens bucket for confirmation
   const handlePlay = async () => {
     if (!user) {
       toast.error("Please sign in to place plays");
@@ -179,163 +441,38 @@ function PlayPage() {
       return;
     }
 
-    // 1. JODI BULK PLAY
     if (game === "jodi_bulk") {
-      if (openClosed) {
-        toast.error(`Jodi Bulk is closed because Open timing (${fmtTime(m?.open_time || "")}) has passed.`);
-        return;
-      }
-      if (selectedJodis.length === 0) {
+      if (selectedJodis.length > 0) {
+        const ok = handleAddJodiBulkToBucket();
+        if (ok) setIsBucketOpen(true);
+      } else if (bucket.length > 0) {
+        setIsBucketOpen(true);
+      } else {
         toast.error("Please select at least one Jodi");
-        return;
       }
-      const bets = selectedJodis.map((j) => ({
-        number: j,
-        points: jodiPoints[j] || 5,
-      }));
-      const anyInvalid = bets.some((b) => b.points < 5);
-      if (anyInvalid) {
-        toast.error("Minimum bet per Jodi is ₹5");
-        return;
-      }
-      if (totalJodiPoints > userBalance) {
-        toast.error(`Not enough balance. Required: ₹${totalJodiPoints}`);
-        return;
-      }
-
-      setBusy(true);
-      const { error } = await supabase.rpc("place_bulk_bets", {
-        _market: marketId,
-        _game: "jodi",
-        _session: "close",
-        _bets: bets,
-      });
-      setBusy(false);
-
-      if (error) {
-        toast.error(error.message);
-        return;
-      }
-
-      toast.success(`Success! Placed ${bets.length} Jodi bets on ${m?.name} (Total ₹${totalJodiPoints})!`);
-      setSelectedJodis([]);
-      setJodiPoints({});
-      qc.invalidateQueries({ queryKey: ["profile"] });
-      qc.invalidateQueries({ queryKey: ["today-expense"] });
       return;
     }
 
-    // 2. ANK BULK PLAY
     if (game === "ank_bulk") {
-      if (effSession === "open" && openClosed) {
-        toast.error(`Open session has closed for ${m?.name} (${fmtTime(m?.open_time || "")}). Please play Close session.`);
-        return;
-      }
-      if (activeAnkEntries.length === 0) {
+      if (activeAnkEntries.length > 0) {
+        const ok = handleAddAnkBulkToBucket();
+        if (ok) setIsBucketOpen(true);
+      } else if (bucket.length > 0) {
+        setIsBucketOpen(true);
+      } else {
         toast.error("Please enter at least ₹5 for one digit");
-        return;
       }
-      if (totalAnkPoints > userBalance) {
-        toast.error(`Not enough balance. Required: ₹${totalAnkPoints}`);
-        return;
-      }
-
-      setBusy(true);
-      const { error } = await supabase.rpc("place_bulk_bets", {
-        _market: marketId,
-        _game: "single",
-        _session: effSession,
-        _bets: activeAnkEntries,
-      });
-      setBusy(false);
-
-      if (error) {
-        toast.error(error.message);
-        return;
-      }
-
-      toast.success(
-        `Success! Placed ${activeAnkEntries.length} Ank bets (${effSession.toUpperCase()}) on ${m?.name} (Total ₹${totalAnkPoints})!`
-      );
-      setAnkPoints({});
-      qc.invalidateQueries({ queryKey: ["profile"] });
-      qc.invalidateQueries({ queryKey: ["today-expense"] });
       return;
     }
 
-    // 3. SANGAM PLAY
-    if (game === "half_sangam" || game === "full_sangam") {
-      const num = `${sangamPart1}-${sangamPart2}`;
-      if (!sangamPart1 || !sangamPart2) {
-        toast.error("Please enter both parts for Sangam");
-        return;
-      }
-      setBusy(true);
-      const { error } = await supabase.rpc("place_bet", {
-        _market: marketId,
-        _game: game,
-        _session: "close",
-        _number: num,
-        _points: points,
-      });
-      setBusy(false);
-      if (error) {
-        toast.error(error.message);
-        return;
-      }
-      toast.success(`Bet placed on Sangam: ${num} for ₹${points}!`);
-      setSangamPart1("");
-      setSangamPart2("");
-      qc.invalidateQueries({ queryKey: ["profile"] });
-      qc.invalidateQueries({ queryKey: ["today-expense"] });
-      return;
-    }
-
-    // 4. REGULAR SINGLE SELECTION PLAY
-    if (effSession === "open" && openClosed) {
-      toast.error(`Open session has closed for ${m?.name} (${fmtTime(m?.open_time || "")}). Please play Close session.`);
-      return;
-    }
-
-    if (g.closeOnly && openClosed) {
-      toast.error(`${g.label} can only be played before Open timing.`);
-      return;
-    }
-
-    if (!selectedNumber) {
+    if (selectedNumber || game.includes("sangam")) {
+      const ok = handleSingleAddToBucket();
+      if (ok) setIsBucketOpen(true);
+    } else if (bucket.length > 0) {
+      setIsBucketOpen(true);
+    } else {
       toast.error("Please select a number first");
-      return;
     }
-
-    if (points < 5) {
-      toast.error("Minimum bet is ₹5");
-      return;
-    }
-
-    if (points > userBalance) {
-      toast.error(`Not enough balance. Required: ₹${points}`);
-      return;
-    }
-
-    setBusy(true);
-    const { error } = await supabase.rpc("place_bet", {
-      _market: marketId,
-      _game: game,
-      _session: effSession,
-      _number: selectedNumber,
-      _points: points,
-    });
-    setBusy(false);
-
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-
-    toast.success(`Success! Played ${selectedNumber} on ${m?.name} (${effSession.toUpperCase()}) for ₹${points}!`);
-    setSelectedNumber(null);
-    qc.invalidateQueries({ queryKey: ["profile"] });
-    qc.invalidateQueries({ queryKey: ["today-expense"] });
   };
 
   if (!m) return <main className="mx-auto max-w-lg p-8 text-center text-muted-foreground">Loading…</main>;
@@ -354,9 +491,26 @@ function PlayPage() {
 
           <h1 className="font-display text-2xl tracking-wider text-gold">{m.name}</h1>
 
-          <div className="flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary" title="Today's Expense">
-            <span className="text-[10px] uppercase font-bold text-muted-foreground">Today's Bet:</span>
-            <span className="font-bold text-foreground">₹{todayExp?.totalExpense ?? 0}</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsBucketOpen(true)}
+              className="relative flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 px-2.5 py-1 text-xs font-semibold text-gold hover:bg-gold/20 transition-all cursor-pointer"
+              title="View Bet Bucket"
+            >
+              <ShoppingBag className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Bucket</span>
+              {bucket.length > 0 && (
+                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-gold px-1 text-[10px] font-black text-slate-950">
+                  {bucket.length}
+                </span>
+              )}
+            </button>
+
+            <div className="flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary" title="Today's Expense">
+              <span className="text-[10px] uppercase font-bold text-muted-foreground hidden sm:inline">Today's Bet:</span>
+              <span className="font-bold text-foreground">₹{todayExp?.totalExpense ?? 0}</span>
+            </div>
           </div>
         </div>
 
@@ -834,6 +988,28 @@ function PlayPage() {
       {/* STICKY BOTTOM ACTION BAR */}
       <div className="fixed bottom-0 left-0 right-0 z-30 border-t bg-background/95 backdrop-blur-md px-4 py-3 shadow-2xl">
         <div className="mx-auto max-w-xl space-y-2">
+          {/* Floating Bucket Alert Banner (when bucket has queued plays) */}
+          {bucket.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsBucketOpen(true)}
+              className="w-full flex items-center justify-between rounded-xl bg-gold/15 border border-gold/40 px-3.5 py-2 text-xs font-semibold text-foreground hover:bg-gold/25 transition-all shadow-md backdrop-blur-sm"
+            >
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gold text-slate-950 font-black text-[11px]">
+                  {bucket.length}
+                </span>
+                <span>
+                  Bucket: <strong>{bucket.length} Plays Queued</strong>
+                </span>
+              </div>
+              <div className="flex items-center gap-1 text-gold font-bold">
+                <span>Total ₹{totalBucketAmount}</span>
+                <span className="text-[11px] underline ml-1">View & Confirm →</span>
+              </div>
+            </button>
+          )}
+
           {/* A. JODI BULK BOTTOM BAR */}
           {game === "jodi_bulk" ? (
             <div className="space-y-2">
@@ -857,17 +1033,37 @@ function PlayPage() {
                   Jodi Bulk Closed (Open Timing Passed)
                 </Button>
               ) : selectedJodis.length === 0 ? (
-                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
-                  Select jodis and enter amount (₹)
-                </Button>
+                <div className="flex gap-2">
+                  <Button disabled className="flex-1 h-11 text-xs font-semibold rounded-xl bg-muted text-muted-foreground">
+                    Select jodis and enter amount (₹)
+                  </Button>
+                  {bucket.length > 0 && (
+                    <Button
+                      type="button"
+                      onClick={() => setIsBucketOpen(true)}
+                      className="h-11 px-4 text-xs font-bold rounded-xl bg-gold text-slate-950 hover:bg-gold/90 shadow-sm"
+                    >
+                      <ShoppingBag className="h-4 w-4 mr-1.5" /> Bucket ({bucket.length})
+                    </Button>
+                  )}
+                </div>
               ) : (
-                <Button
-                  onClick={handlePlay}
-                  disabled={busy || totalJodiPoints === 0}
-                  className="w-full h-11 text-sm font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
-                >
-                  {busy ? "Placing Plays…" : `Place Bets (${selectedJodis.length} Jodis · Total ₹${totalJodiPoints})`}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    onClick={handleAddJodiBulkToBucket}
+                    className="flex-1 h-11 text-xs font-bold rounded-xl border border-gold/40 bg-gold/10 hover:bg-gold/20 text-gold"
+                  >
+                    <Plus className="h-4 w-4 mr-1" /> Add ({selectedJodis.length}) to Bucket
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handlePlay}
+                    className="flex-1 h-11 text-xs font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
+                  >
+                    Confirm & Review ({selectedJodis.length} Jodis)
+                  </Button>
+                </div>
               )}
             </div>
           ) : game === "ank_bulk" ? (
@@ -893,17 +1089,37 @@ function PlayPage() {
                   Open Session Closed
                 </Button>
               ) : activeAnkEntries.length === 0 ? (
-                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
-                  Enter amount (₹) to place bets
-                </Button>
+                <div className="flex gap-2">
+                  <Button disabled className="flex-1 h-11 text-xs font-semibold rounded-xl bg-muted text-muted-foreground">
+                    Enter amount (₹) to place bets
+                  </Button>
+                  {bucket.length > 0 && (
+                    <Button
+                      type="button"
+                      onClick={() => setIsBucketOpen(true)}
+                      className="h-11 px-4 text-xs font-bold rounded-xl bg-gold text-slate-950 hover:bg-gold/90 shadow-sm"
+                    >
+                      <ShoppingBag className="h-4 w-4 mr-1.5" /> Bucket ({bucket.length})
+                    </Button>
+                  )}
+                </div>
               ) : (
-                <Button
-                  onClick={handlePlay}
-                  disabled={busy}
-                  className="w-full h-11 text-sm font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
-                >
-                  {busy ? "Placing Plays…" : `Place Bets (${activeAnkEntries.length} Digits · Total ₹${totalAnkPoints})`}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    onClick={handleAddAnkBulkToBucket}
+                    className="flex-1 h-11 text-xs font-bold rounded-xl border border-gold/40 bg-gold/10 hover:bg-gold/20 text-gold"
+                  >
+                    <Plus className="h-4 w-4 mr-1" /> Add ({activeAnkEntries.length}) to Bucket
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handlePlay}
+                    className="flex-1 h-11 text-xs font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
+                  >
+                    Confirm & Review ({activeAnkEntries.length} Digits)
+                  </Button>
+                </div>
               )}
             </div>
           ) : (
@@ -957,7 +1173,7 @@ function PlayPage() {
                 </div>
               )}
 
-              {/* Big Action Button */}
+              {/* Action Buttons */}
               {marketClosed ? (
                 <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
                   Market Closed for Today
@@ -967,26 +1183,175 @@ function PlayPage() {
                   {g.label} Closed (Open Timing Passed)
                 </Button>
               ) : !selectedNumber && game !== "half_sangam" && game !== "full_sangam" ? (
-                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
-                  Select number and enter amount (₹)
-                </Button>
+                <div className="flex gap-2">
+                  <Button disabled className="flex-1 h-11 text-xs font-semibold rounded-xl bg-muted text-muted-foreground">
+                    Select number & enter amount (₹)
+                  </Button>
+                  {bucket.length > 0 && (
+                    <Button
+                      type="button"
+                      onClick={() => setIsBucketOpen(true)}
+                      className="h-11 px-4 text-xs font-bold rounded-xl bg-gold text-slate-950 hover:bg-gold/90 shadow-sm"
+                    >
+                      <ShoppingBag className="h-4 w-4 mr-1.5" /> Bucket ({bucket.length})
+                    </Button>
+                  )}
+                </div>
               ) : (
-                <Button
-                  onClick={handlePlay}
-                  disabled={busy}
-                  className="w-full h-11 text-sm font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
-                >
-                  {busy
-                    ? "Placing Play…"
-                    : game.includes("sangam")
-                      ? `Play Sangam (₹${points})`
-                      : `Play ${selectedNumber} (₹${points})`}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    onClick={handleSingleAddToBucket}
+                    className="flex-1 h-11 text-xs font-bold rounded-xl border border-gold/40 bg-gold/10 hover:bg-gold/20 text-gold"
+                  >
+                    <Plus className="h-4 w-4 mr-1" /> Add to Bucket
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handlePlay}
+                    className="flex-1 h-11 text-xs font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
+                  >
+                    {bucket.length > 0 ? (
+                      `Confirm Bucket (${bucket.length + 1} Plays)`
+                    ) : (
+                      `Confirm & Review (₹${points})`
+                    )}
+                  </Button>
+                </div>
               )}
             </div>
           )}
         </div>
       </div>
+
+      {/* BUCKET ORDER CONFIRMATION SHEET / DRAWER */}
+      <Sheet open={isBucketOpen} onOpenChange={setIsBucketOpen}>
+        <SheetContent
+          side="bottom"
+          className="max-h-[85vh] rounded-t-3xl border-t border-border/80 bg-card p-0 shadow-2xl sm:max-w-xl sm:mx-auto overflow-hidden flex flex-col"
+        >
+          {/* Top handle bar */}
+          <div className="w-12 h-1.5 rounded-full bg-muted-foreground/30 mx-auto mt-2.5 mb-1" />
+
+          {/* Sheet Header */}
+          <div className="px-5 py-3 border-b flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gold/20 text-gold border border-gold/40">
+                <ShoppingBag className="h-5 w-5" />
+              </div>
+              <div>
+                <SheetTitle className="text-base font-bold text-foreground">
+                  Order Bucket (Bet Slip)
+                </SheetTitle>
+                <p className="text-xs text-muted-foreground">
+                  {m.name} · {bucket.length} Plays queued
+                </p>
+              </div>
+            </div>
+
+            {bucket.length > 0 && (
+              <button
+                type="button"
+                onClick={clearBucket}
+                className="text-xs font-semibold text-destructive hover:underline flex items-center gap-1 px-2 py-1 rounded-md hover:bg-destructive/10 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Clear All
+              </button>
+            )}
+          </div>
+
+          {/* Scrollable Items List */}
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 max-h-[50vh]">
+            {bucket.length === 0 ? (
+              <div className="py-12 text-center text-muted-foreground space-y-2">
+                <ShoppingBag className="mx-auto h-12 w-12 opacity-30 text-gold" />
+                <p className="text-sm font-semibold text-foreground">Your bucket is empty</p>
+                <p className="text-xs text-muted-foreground max-w-xs mx-auto">
+                  Select your numbers and tap <strong>"+ Add to Bucket"</strong> to queue plays here before confirming.
+                </p>
+              </div>
+            ) : (
+              bucket.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between rounded-xl border bg-background/50 p-3 shadow-xs hover:border-gold/30 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                        item.session === "open"
+                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+                          : "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30"
+                      }`}
+                    >
+                      {item.session}
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {item.gameLabel}
+                        </span>
+                        <span className="text-base font-black tracking-wide text-foreground">
+                          #{item.number}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 bg-card rounded-lg px-2 py-1 border border-border">
+                      <span className="text-xs font-bold text-gold">₹</span>
+                      <Input
+                        type="number"
+                        min={5}
+                        step={5}
+                        value={item.points}
+                        onChange={(e) => updateBucketItemPoints(item.id, Number(e.target.value))}
+                        className="w-16 h-7 text-xs font-bold text-center border-0 p-0 focus-visible:ring-0 bg-transparent"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeFromBucket(item.id)}
+                      className="rounded-lg p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                      title="Remove from bucket"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Footer with Summary and Confirm Button */}
+          <div className="border-t bg-card p-4 space-y-3">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground font-medium">
+                Total Plays: <strong className="text-foreground">{bucket.length}</strong>
+              </span>
+              <span className="font-bold text-base text-foreground">
+                Total Amount: <strong className="text-gold text-lg">₹{totalBucketAmount}</strong>
+              </span>
+            </div>
+
+            <Button
+              onClick={handleConfirmBucket}
+              disabled={busy || bucket.length === 0}
+              className="w-full h-12 text-sm font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-2"
+            >
+              {busy ? (
+                "Placing Orders…"
+              ) : (
+                <>
+                  <CheckCircle2 className="h-5 w-5" />
+                  Confirm & Place All Bets (₹{totalBucketAmount})
+                </>
+              )}
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </main>
   );
 }

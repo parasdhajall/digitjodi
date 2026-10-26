@@ -198,6 +198,35 @@ export type Database = {
         }
         Returns: number
       }
+      place_bucket_bets: {
+        Args: {
+          _market: string
+          _bets: {
+            game: string
+            session: string
+            number: string
+            points: number
+          }[]
+        }
+        Returns: {
+          success: boolean
+          count: number
+          total_points: number
+          balance: number
+        }
+      }
+      place_bulk_bets: {
+        Args: {
+          _market: string
+          _game: string
+          _session: string
+          _bets: {
+            number: string
+            points: number
+          }[]
+        }
+        Returns: number
+      }
       reset_market: { Args: { _market: string }; Returns: undefined }
     }
     Enums: {

@@ -246,14 +246,121 @@ begin
   update public.markets set open_panna=null, close_panna=null where id=_market;
 end $$;
 
+-- 13. PLACE BUCKET BETS STORED FUNCTION (Atomic Batch Betting)
+create or replace function public.place_bucket_bets(_market uuid, _bets jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  m public.markets;
+  bal integer;
+  total_pts integer := 0;
+  bet_item jsonb;
+  b_game text;
+  b_session text;
+  b_num text;
+  b_pts integer;
+  distinct_ct integer;
+  now_t time;
+  is_cross boolean;
+  open_passed boolean;
+  close_passed boolean;
+  inserted_count integer := 0;
+begin
+  if auth.uid() is null then raise exception 'Not signed in'; end if;
+  if jsonb_array_length(_bets) = 0 then raise exception 'Bucket is empty'; end if;
+
+  select * into m from public.markets where id=_market;
+  if m.id is null or not m.active then raise exception 'Market closed'; end if;
+
+  now_t := (now() at time zone 'Asia/Kolkata')::time;
+  is_cross := (m.close_time <= m.open_time);
+
+  if not is_cross then
+    close_passed := (now_t >= m.close_time);
+  else
+    close_passed := (now_t >= m.close_time and now_t < m.open_time);
+  end if;
+
+  if m.close_panna is not null or close_passed then
+    raise exception 'Market has closed for today (% closed at %)', m.name, to_char(m.close_time, 'HH12:MI AM');
+  end if;
+
+  if not is_cross then
+    open_passed := (now_t >= m.open_time);
+  else
+    open_passed := (now_t >= m.open_time or now_t < m.close_time);
+  end if;
+
+  for bet_item in select * from jsonb_array_elements(_bets)
+  loop
+    b_game := bet_item->>'game';
+    b_session := bet_item->>'session';
+    b_num := bet_item->>'number';
+    b_pts := (bet_item->>'points')::integer;
+
+    if b_pts is null or b_pts < 5 or b_pts > 10000 then
+      raise exception 'Points for number % must be between 5 and 10000', b_num;
+    end if;
+
+    if b_game not in ('single','jodi','single_panna','double_panna','triple_panna','half_sangam','full_sangam') then
+      raise exception 'Invalid game type: %', b_game;
+    end if;
+
+    if b_game in ('jodi','half_sangam','full_sangam') then
+      b_session := 'close';
+      if m.open_panna is not null or open_passed then
+        raise exception '% can only be played before Open timing (% Open was at %)', b_game, m.name, to_char(m.open_time, 'HH12:MI AM');
+      end if;
+    end if;
+
+    if b_session not in ('open','close') then
+      raise exception 'Invalid session for %', b_num;
+    end if;
+
+    if b_session = 'open' then
+      if m.open_panna is not null or open_passed then
+        raise exception 'Open session has closed for % (Open was at %). Please play Close session.', m.name, to_char(m.open_time, 'HH12:MI AM');
+      end if;
+    end if;
+
+    if b_game = 'single_panna' then
+      if b_num !~ '^[0-9]{3}$' then raise exception 'Panna must be 3 digits: %', b_num; end if;
+      select count(distinct c) into distinct_ct from regexp_split_to_table(b_num,'') c;
+      if distinct_ct <> 3 then raise exception 'Single panna needs 3 different digits: %', b_num; end if;
+    elsif b_game like '%panna' then
+      if b_num !~ '^[0-9]{3}$' then raise exception 'Panna must be 3 digits: %', b_num; end if;
+      select count(distinct c) into distinct_ct from regexp_split_to_table(b_num,'') c;
+      if (b_game='double_panna' and distinct_ct <> 2) or (b_game='triple_panna' and distinct_ct <> 1) then
+        raise exception 'Number % does not match %', b_num, b_game;
+      end if;
+    elsif (b_game='single' and b_num !~ '^[0-9]$') or (b_game='jodi' and b_num !~ '^[0-9]{2}$')
+       or (b_game='half_sangam' and b_num !~ '^[0-9]-[0-9]{3}$') or (b_game='full_sangam' and b_num !~ '^[0-9]{3}-[0-9]{3}$') then
+      raise exception 'Invalid number format: %', b_num;
+    end if;
+
+    total_pts := total_pts + b_pts;
+  end loop;
+
+  update public.profiles set points = points - total_pts where id = auth.uid() returning points into bal;
+
+  for bet_item in select * from jsonb_array_elements(_bets)
+  loop
+    b_game := bet_item->>'game';
+    b_session := bet_item->>'session';
+    b_num := bet_item->>'number';
+    b_pts := (bet_item->>'points')::integer;
+    if b_game in ('jodi','half_sangam','full_sangam') then
+      b_session := 'close';
+    end if;
+
+    insert into public.bets(user_id, market_id, game_type, session, number, points)
+    values (auth.uid(), _market, b_game, b_session, b_num, b_pts);
+    inserted_count := inserted_count + 1;
+  end loop;
+
+  return jsonb_build_object('success', true, 'count', inserted_count, 'total_points', total_pts, 'balance', bal);
+end $$;
+
+grant execute on function public.place_bucket_bets(uuid, jsonb) to authenticated;
 grant execute on function public.place_bet(uuid,text,text,text,integer) to authenticated;
 grant execute on function public.declare_result(uuid,text,text) to authenticated;
 grant execute on function public.reset_market(uuid) to authenticated;
-
--- 12. INITIAL MARKETS DATA
-insert into public.markets(name, open_time, close_time, sort_order, open_panna) values
- ('Sunrise Day','09:30','10:30',1,null),
- ('Lotus Morning','11:00','12:00',2,null),
- ('Royal Noon','13:15','14:15',3,null),
- ('Star Evening','16:00','18:00',4,null),
- ('Moon Night','21:00','23:00',5,null);
