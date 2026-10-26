@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { Coins, LogOut } from "lucide-react";
+import { Coins, LogOut, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, useProfile } from "@/hooks/useAuth";
@@ -28,6 +28,17 @@ export function SiteHeader() {
           {profile?.isAdmin && <Link to="/admin" activeProps={{ className: "text-primary" }}>Admin</Link>}
         </nav>
         <div className="ml-auto flex items-center gap-2">
+          {/* Direct Android APK download */}
+          <a
+            href="/PlayOn.apk"
+            download="PlayOn.apk"
+            className="flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-xs font-bold text-gold hover:bg-primary hover:text-primary-foreground transition-all shadow-sm"
+            title="Download Android APK"
+          >
+            <Smartphone className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Download</span> App
+          </a>
+
           {user ? (
             <>
               <span className="flex items-center gap-1 rounded-full bg-secondary px-3 py-1 text-sm font-semibold text-primary">

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer Gold Ring -->
+    <path
+        android:fillColor="#E5A93C"
+        android:pathData="M54,20 C35.2,20 20,35.2 20,54 C20,72.8 35.2,88 54,88 C72.8,88 88,72.8 88,54 C88,35.2 72.8,20 54,20 Z M54,26 C69.5,26 82,38.5 82,54 C82,69.5 69.5,82 54,82 C38.5,82 26,69.5 26,54 C26,38.5 38.5,26 54,26 Z" />
+    <!-- Letter P -->
+    <path
+        android:fillColor="#E5A93C"
+        android:pathData="M44,36 L58,36 C64.6,36 68,39.4 68,45 C68,50.6 64.6,54 58,54 L51,54 L51,72 L44,72 Z M51,48 L57.5,48 C60.2,48 61.5,46.8 61.5,45 C61.5,43.2 60.2,42 57.5,42 L51,42 Z" />
+</vector>

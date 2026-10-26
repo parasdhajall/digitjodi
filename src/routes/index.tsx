@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { Clock, Play, Zap } from "lucide-react";
+import { Clock, Play, Zap, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtTime, resultLabel, marketStatus, GAMES } from "@/lib/matka";
@@ -56,6 +56,15 @@ function Index() {
             <p className="mt-1 text-sm text-muted-foreground sm:text-base">
               1000 free bonus points on signup. Select a market and play your favorite game.
             </p>
+            <div className="mt-3.5">
+              <a
+                href="/PlayOn.apk"
+                download="PlayOn.apk"
+                className="inline-flex items-center gap-2 rounded-xl border border-primary/40 bg-primary px-4 py-2 text-xs sm:text-sm font-bold text-primary-foreground shadow-md hover:bg-primary/90 transition-all"
+              >
+                <Smartphone className="h-4 w-4" /> Download Android App (.apk)
+              </a>
+            </div>
           </div>
         </div>
       </section>
