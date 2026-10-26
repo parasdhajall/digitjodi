@@ -9,6 +9,7 @@ import { gameLabel, fmtIST } from "@/lib/matka";
 type Market = { id: string; name: string };
 
 export function AdminPlays({ markets }: { markets: Market[] }) {
+  const [dateFilter, setDateFilter] = useState<"today" | "yesterday" | "all">("today");
   const [marketId, setMarketId] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
@@ -35,9 +36,26 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
 
   const marketName = (id: string) => markets.find((m) => m.id === id)?.name ?? "—";
 
-  // Filtered bets
+  // Calculate IST Date strings for Today & Yesterday
+  const now = new Date();
+  const todayDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
+  const yesterdayDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(yesterdayDate);
+
+  // 1. Filter by Date (Today, Yesterday, or All)
+  const dateFilteredBets = useMemo(() => {
+    if (!data) return [];
+    if (dateFilter === "all") return data;
+    const targetDate = dateFilter === "today" ? todayDateStr : yesterdayDateStr;
+    return data.filter((b) => {
+      const bDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(b.created_at));
+      return bDate === targetDate;
+    });
+  }, [data, dateFilter, todayDateStr, yesterdayDateStr]);
+
+  // 2. Filter by Market, Status, and Search
   const filteredBets = useMemo(() => {
-    return (data ?? []).filter((b) => {
+    return dateFilteredBets.filter((b) => {
       if (marketId !== "all" && b.market_id !== marketId) return false;
       if (statusFilter !== "all" && b.status !== statusFilter) return false;
       if (search.trim()) {
@@ -49,12 +67,12 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
       }
       return true;
     });
-  }, [data, marketId, statusFilter, search, markets]);
+  }, [dateFilteredBets, marketId, statusFilter, search, markets]);
 
-  // Top Most played numbers
+  // 3. Top Most played numbers for this selected date
   const top = useMemo(() => {
     const map = new Map<string, { market_id: string; game_type: string; session: string; number: string; points: number; count: number }>();
-    for (const b of data ?? []) {
+    for (const b of dateFilteredBets) {
       const k = `${b.market_id}|${b.game_type}|${b.session}|${b.number}`;
       const cur = map.get(k) ?? { market_id: b.market_id, game_type: b.game_type, session: b.session, number: b.number, points: 0, count: 0 };
       cur.points += b.points;
@@ -62,27 +80,67 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
       map.set(k, cur);
     }
     return [...map.values()].sort((a, b) => b.points - a.points).slice(0, 8);
-  }, [data]);
+  }, [dateFilteredBets]);
 
-  const totalPoints = (data ?? []).reduce((s, b) => s + b.points, 0);
-  const totalPayout = (data ?? []).reduce((s, b) => s + (b.payout || 0), 0);
-  const totalUniquePlayers = new Set((data ?? []).map((b) => b.user_id)).size;
+  const totalPoints = dateFilteredBets.reduce((s, b) => s + b.points, 0);
+  const totalPayout = dateFilteredBets.reduce((s, b) => s + (b.payout || 0), 0);
+  const totalUniquePlayers = new Set(dateFilteredBets.map((b) => b.user_id)).size;
+  const dateLabel = dateFilter === "today" ? "Today" : dateFilter === "yesterday" ? "Yesterday" : "All Time";
 
   return (
     <section className="space-y-4">
       {/* Overview Stats */}
       <div className="grid gap-3 sm:grid-cols-4">
-        <Stat label="Total Plays" value={data?.length ?? 0} />
-        <Stat label="Total Amount Played" value={totalPoints} unit="₹" />
-        <Stat label="Total Payouts Won" value={totalPayout} unit="₹" />
-        <Stat label="Active Players" value={totalUniquePlayers} />
+        <Stat label={`Total Plays (${dateLabel})`} value={dateFilteredBets.length} />
+        <Stat label={`Total Amount Played (${dateLabel})`} value={totalPoints} unit="₹" />
+        <Stat label={`Total Payouts Won (${dateLabel})`} value={totalPayout} unit="₹" />
+        <Stat label={`Active Players (${dateLabel})`} value={totalUniquePlayers} />
       </div>
 
       {/* Header and Filter Controls */}
       <div className="rounded-xl border bg-card p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
-          <h2 className="font-display text-2xl tracking-wide text-gold">Live Player Plays Feed</h2>
-          <span className="text-xs text-muted-foreground">Auto-refreshes every 10s</span>
+          <div className="flex items-center gap-2">
+            <h2 className="font-display text-2xl tracking-wide text-gold">Player Plays Feed</h2>
+            <span className="text-xs text-muted-foreground">({dateLabel})</span>
+          </div>
+
+          {/* Quick Date Switcher: Today | Yesterday | All Time */}
+          <div className="flex items-center gap-1 rounded-lg border bg-secondary/80 p-1 text-xs">
+            <button
+              type="button"
+              onClick={() => setDateFilter("today")}
+              className={`rounded px-3 py-1 font-semibold transition-all ${
+                dateFilter === "today"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              onClick={() => setDateFilter("yesterday")}
+              className={`rounded px-3 py-1 font-semibold transition-all ${
+                dateFilter === "yesterday"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Yesterday
+            </button>
+            <button
+              type="button"
+              onClick={() => setDateFilter("all")}
+              className={`rounded px-3 py-1 font-semibold transition-all ${
+                dateFilter === "all"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              All Time
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -124,7 +182,7 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
             <option value="refunded">Refunded</option>
           </select>
 
-          {(search || marketId !== "all" || statusFilter !== "all") && (
+          {(search || marketId !== "all" || statusFilter !== "all" || dateFilter !== "today") && (
             <Button
               size="sm"
               variant="ghost"
@@ -132,6 +190,7 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
                 setSearch("");
                 setMarketId("all");
                 setStatusFilter("all");
+                setDateFilter("today");
               }}
               className="text-xs h-9"
             >
@@ -144,7 +203,7 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
       {/* Most Played Numbers (Hot Bids) */}
       <div className="rounded-xl border bg-card p-4">
         <h3 className="mb-3 flex items-center gap-2 font-semibold text-sm">
-          <Flame className="h-4 w-4 text-accent fill-accent" /> High Volume Numbers (Hot Bids)
+          <Flame className="h-4 w-4 text-accent fill-accent" /> High Volume Numbers ({dateLabel})
         </h3>
         {top.length === 0 ? (
           <p className="text-sm text-muted-foreground">No plays recorded yet.</p>

@@ -74,30 +74,38 @@ function Admin() {
     },
   });
 
-  const { data: todayBets } = useQuery({
-    queryKey: ["admin-today-bets"],
+  const { data: userBetStats } = useQuery({
+    queryKey: ["admin-user-bet-stats"],
     refetchInterval: 10000,
     queryFn: async () => {
       const now = new Date();
-      const istDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
-      const istStartIso = new Date(`${istDateStr}T00:00:00+05:30`).toISOString();
+      const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
+      const yesterdayDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const yesterdayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(yesterdayDate);
+      const yesterdayStartIso = new Date(`${yesterdayStr}T00:00:00+05:30`).toISOString();
+
       const { data } = await supabase
         .from("bets")
-        .select("user_id, points, status")
-        .gte("created_at", istStartIso);
-      return data ?? [];
+        .select("user_id, points, status, created_at")
+        .gte("created_at", yesterdayStartIso);
+
+      const todayMap: Record<string, number> = {};
+      const yesterdayMap: Record<string, number> = {};
+
+      for (const b of data ?? []) {
+        if (b.status !== "refunded") {
+          const bDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(b.created_at));
+          if (bDateStr === todayStr) {
+            todayMap[b.user_id] = (todayMap[b.user_id] || 0) + (b.points || 0);
+          } else if (bDateStr === yesterdayStr) {
+            yesterdayMap[b.user_id] = (yesterdayMap[b.user_id] || 0) + (b.points || 0);
+          }
+        }
+      }
+
+      return { todayMap, yesterdayMap, todayStr, yesterdayStr };
     },
   });
-
-  const todayExpenseByUser = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const b of todayBets ?? []) {
-      if (b.status !== "refunded") {
-        map[b.user_id] = (map[b.user_id] || 0) + (b.points || 0);
-      }
-    }
-    return map;
-  }, [todayBets]);
 
   const filteredPlayers = useMemo(() => {
     if (!players) return [];
@@ -436,6 +444,7 @@ function Admin() {
                   <th>Status</th>
                   <th>Balance (₹)</th>
                   <th>Today's Bet (₹)</th>
+                  <th>Yesterday's Bet (₹)</th>
                   <th>Joined Date</th>
                   <th className="text-right pr-4">Security Actions</th>
                 </tr>
@@ -471,7 +480,13 @@ function Admin() {
 
                     <td>
                       <span className="font-semibold text-primary">
-                        ₹{(todayExpenseByUser[p.id] ?? 0).toLocaleString()}
+                        ₹{(userBetStats?.todayMap[p.id] ?? 0).toLocaleString()}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span className="font-semibold text-muted-foreground">
+                        ₹{(userBetStats?.yesterdayMap[p.id] ?? 0).toLocaleString()}
                       </span>
                     </td>
 
@@ -537,7 +552,7 @@ function Admin() {
 
                 {filteredPlayers.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-muted-foreground">
+                    <td colSpan={7} className="p-8 text-center text-muted-foreground">
                       No users found.
                     </td>
                   </tr>
