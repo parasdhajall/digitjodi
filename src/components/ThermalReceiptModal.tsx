@@ -10,9 +10,11 @@ import {
 import { toast } from "sonner";
 import {
   type ReceiptData,
-  printViaWebBluetooth,
+  printerManager,
+  usePrinter,
   printViaSystem,
 } from "@/lib/thermalPrinter";
+import { PrinterStatusBadge } from "./PrinterStatusBadge";
 
 interface ThermalReceiptModalProps {
   open: boolean;
@@ -26,20 +28,20 @@ export function ThermalReceiptModal({
   receiptData,
 }: ThermalReceiptModalProps) {
   const [printing, setPrinting] = useState(false);
+  const { isConnected, deviceName } = usePrinter();
 
   if (!receiptData) return null;
 
   const handleBluetoothPrint = async () => {
     setPrinting(true);
-    toast.info("Connecting to Bluetooth printer...");
-    const res = await printViaWebBluetooth(receiptData);
+    toast.info("Sending print to thermal printer...");
+    const res = await printerManager.print(receiptData);
     setPrinting(false);
 
     if (res.success) {
       toast.success(res.message);
     } else {
       toast.error(res.message);
-      // Automatically fallback suggestion
       toast("Tip: You can also tap 'System Print' to print via Android default printer service.", {
         action: {
           label: "System Print",
@@ -68,6 +70,8 @@ export function ThermalReceiptModal({
                   </p>
                 </div>
               </div>
+
+              <PrinterStatusBadge showTextOnMobile={true} />
             </div>
           </DialogHeader>
 

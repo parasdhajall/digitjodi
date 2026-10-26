@@ -1,4 +1,5 @@
 // Thermal Printer Utility for 58mm Bluetooth Printers (ESC/POS & System Print)
+import { useState, useEffect } from "react";
 
 export type ReceiptData = {
   slipId: string;
@@ -15,7 +16,9 @@ export type ReceiptData = {
   totalPoints: number;
 };
 
-// Generate raw ESC/POS bytes for 58mm Thermal Printers
+export type PrinterStatus = "disconnected" | "connecting" | "connected";
+
+// Standard 58mm ESC/POS byte generator
 export function generateEscPosBytes(data: ReceiptData): Uint8Array {
   const encoder = new TextEncoder();
   const parts: Uint8Array[] = [];
@@ -46,12 +49,10 @@ export function generateEscPosBytes(data: ReceiptData): Uint8Array {
 
   // Left Align Table Header
   addBytes([0x1b, 0x61, 0x00]); // ESC a 0 (left)
-  // 32 columns format for 58mm:
-  // "GAME       SESS  NO.     AMT"
   add("TYPE      SESS   NUM     AMT(Rs)\n");
   add("--------------------------------\n");
 
-  // Items
+  // Items (formatted for 32 columns 58mm width)
   data.items.forEach((item) => {
     const type = item.gameLabel.slice(0, 8).padEnd(9, " ");
     const sess = item.session.toUpperCase().slice(0, 4).padEnd(6, " ");
@@ -62,7 +63,7 @@ export function generateEscPosBytes(data: ReceiptData): Uint8Array {
 
   add("--------------------------------\n");
 
-  // Total (Bold & Right/Left)
+  // Total (Bold)
   addBytes([0x1b, 0x45, 0x01]); // bold on
   add(`TOTAL PLAYS:  ${data.items.length}\n`);
   add(`TOTAL AMOUNT: Rs.${data.totalPoints}\n`);
@@ -88,86 +89,213 @@ export function generateEscPosBytes(data: ReceiptData): Uint8Array {
   return result;
 }
 
-// Print via Web Bluetooth API (Everycom, MPT-II, POS-58)
-export async function printViaWebBluetooth(data: ReceiptData): Promise<{ success: boolean; message: string }> {
-  const nav = navigator as any;
-  if (!nav.bluetooth) {
-    return {
-      success: false,
-      message: "Web Bluetooth is not supported in this browser. Use System Print instead.",
-    };
+const COMMON_PRINTER_SERVICES = [
+  "000018f0-0000-1000-8000-00805f9b34fb", // standard ESC/POS
+  "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // Everycom / generic POS
+  "49535343-fe7d-4ae5-8fa9-9fafd205e455", // ISSC transparent UART
+  "0000ae00-0000-1000-8000-00805f9b34fb",
+  "0000ae30-0000-1000-8000-00805f9b34fb",
+  "0000af30-0000-1000-8000-00805f9b34fb",
+  "0000ff00-0000-1000-8000-00805f9b34fb",
+  "0000fee7-0000-1000-8000-00805f9b34fb",
+  "00001800-0000-1000-8000-00805f9b34fb",
+  "00001801-0000-1000-8000-00805f9b34fb",
+  "0000180a-0000-1000-8000-00805f9b34fb",
+];
+
+// Persistent Bluetooth Printer Manager Singleton
+class BluetoothPrinterManager {
+  private device: any = null;
+  private server: any = null;
+  private writeChar: any = null;
+  public status: PrinterStatus = "disconnected";
+  public deviceName: string | null = null;
+  private listeners: Set<() => void> = new Set();
+
+  constructor() {
+    if (typeof window !== "undefined") {
+      this.deviceName = localStorage.getItem("last_printer_name") || null;
+    }
   }
 
-  try {
-    // Request Bluetooth Device
-    const device = await nav.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [
-        "000018f0-0000-1000-8000-00805f9b34fb", // common ESC/POS service
-        "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // Everycom / generic service
-        "49535343-fe7d-4ae5-8fa9-9fafd205e455", // ISSC printer service
-        "0000ae00-0000-1000-8000-00805f9b34fb",
-        "0000ae30-0000-1000-8000-00805f9b34fb",
-        "0000af30-0000-1000-8000-00805f9b34fb",
-        "0000ff00-0000-1000-8000-00805f9b34fb",
-        "00001800-0000-1000-8000-00805f9b34fb",
-        "00001801-0000-1000-8000-00805f9b34fb",
-        "0000180a-0000-1000-8000-00805f9b34fb",
-      ],
-    });
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
 
-    if (!device.gatt) {
-      throw new Error("Bluetooth GATT not available on this device.");
+  private notify() {
+    this.listeners.forEach((l) => l());
+  }
+
+  public isConnected(): boolean {
+    return this.status === "connected" && !!this.writeChar;
+  }
+
+  // Connect to Bluetooth Printer
+  public async connect(): Promise<{ success: boolean; message: string }> {
+    const nav = navigator as any;
+    if (!nav.bluetooth) {
+      return {
+        success: false,
+        message: "Web Bluetooth is not supported in this browser. Please use Chrome on Android.",
+      };
     }
 
-    const server = await device.gatt.connect();
+    try {
+      this.status = "connecting";
+      this.notify();
 
-    // Find printable write characteristic
-    const services = await server.getPrimaryServices();
-    let writeChar: any = null;
+      const device = await nav.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: COMMON_PRINTER_SERVICES,
+      });
 
-    for (const service of services) {
-      try {
-        const characteristics = await service.getCharacteristics();
-        for (const char of characteristics) {
-          if (char.properties.write || char.properties.writeWithoutResponse) {
-            writeChar = char;
-            break;
+      if (!device || !device.gatt) {
+        throw new Error("No device selected or Bluetooth GATT not available.");
+      }
+
+      device.addEventListener("gattserverdisconnected", () => {
+        this.status = "disconnected";
+        this.writeChar = null;
+        this.server = null;
+        this.notify();
+      });
+
+      const server = await device.gatt.connect();
+      const services = await server.getPrimaryServices();
+
+      let foundWriteChar: any = null;
+
+      for (const service of services) {
+        try {
+          const chars = await service.getCharacteristics();
+          for (const c of chars) {
+            if (c.properties.write || c.properties.writeWithoutResponse) {
+              foundWriteChar = c;
+              break;
+            }
           }
+        } catch {
+          // ignore restricted services
         }
-      } catch (err) {
-        // ignore non-accessible service
+        if (foundWriteChar) break;
       }
-      if (writeChar) break;
+
+      if (!foundWriteChar) {
+        throw new Error("Could not find print channel on this Bluetooth printer.");
+      }
+
+      this.device = device;
+      this.server = server;
+      this.writeChar = foundWriteChar;
+      this.status = "connected";
+      this.deviceName = device.name || "Bluetooth Printer";
+
+      if (typeof window !== "undefined" && this.deviceName) {
+        localStorage.setItem("last_printer_name", this.deviceName);
+      }
+
+      this.notify();
+      return { success: true, message: `Connected to ${this.deviceName}!` };
+    } catch (err: any) {
+      this.status = "disconnected";
+      this.writeChar = null;
+      this.notify();
+      return {
+        success: false,
+        message: err.message || "Failed to connect to printer",
+      };
+    }
+  }
+
+  // Disconnect
+  public disconnect() {
+    if (this.device && this.device.gatt && this.device.gatt.connected) {
+      this.device.gatt.disconnect();
+    }
+    this.status = "disconnected";
+    this.writeChar = null;
+    this.server = null;
+    this.notify();
+  }
+
+  // Send raw ESC/POS bytes to connected printer
+  public async sendBytes(bytes: Uint8Array): Promise<{ success: boolean; message: string }> {
+    if (!this.isConnected()) {
+      return { success: false, message: "Printer is not connected." };
     }
 
-    if (!writeChar) {
-      throw new Error("Could not find a writable print channel on this Bluetooth printer.");
+    try {
+      const chunkSize = 100;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.slice(i, i + chunkSize);
+        if (this.writeChar.writeValueWithoutResponse) {
+          await this.writeChar.writeValueWithoutResponse(chunk);
+        } else {
+          await this.writeChar.writeValue(chunk);
+        }
+      }
+      return { success: true, message: "Receipt printed successfully!" };
+    } catch (err: any) {
+      // Disconnect if error
+      this.status = "disconnected";
+      this.writeChar = null;
+      this.notify();
+      return {
+        success: false,
+        message: err.message || "Print write failed.",
+      };
+    }
+  }
+
+  // Print Receipt automatically
+  public async print(data: ReceiptData): Promise<{ success: boolean; message: string }> {
+    // 1. If already connected, print immediately!
+    if (this.isConnected()) {
+      const bytes = generateEscPosBytes(data);
+      return await this.sendBytes(bytes);
     }
 
+    // 2. If not connected, try to connect first
+    const connRes = await this.connect();
+    if (!connRes.success) {
+      // Fallback to system print if user wants
+      return connRes;
+    }
+
+    // Print with newly connected printer
     const bytes = generateEscPosBytes(data);
-
-    // Send in chunks (max 512 bytes per BLE write)
-    const chunkSize = 100;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.slice(i, i + chunkSize);
-      if (writeChar.writeValueWithoutResponse) {
-        await writeChar.writeValueWithoutResponse(chunk);
-      } else {
-        await writeChar.writeValue(chunk);
-      }
-    }
-
-    return { success: true, message: "Receipt printed successfully!" };
-  } catch (err: any) {
-    return {
-      success: false,
-      message: err.message || "Failed to print over Bluetooth",
-    };
+    return await this.sendBytes(bytes);
   }
 }
 
-// Trigger Standard 58mm System Print
+export const printerManager = new BluetoothPrinterManager();
+
+// React Hook to observe Printer Connection Status
+export function usePrinter() {
+  const [status, setStatus] = useState<PrinterStatus>(printerManager.status);
+  const [deviceName, setDeviceName] = useState<string | null>(printerManager.deviceName);
+
+  useEffect(() => {
+    const unsub = printerManager.subscribe(() => {
+      setStatus(printerManager.status);
+      setDeviceName(printerManager.deviceName);
+    });
+    return unsub;
+  }, []);
+
+  return {
+    status,
+    deviceName,
+    isConnected: status === "connected",
+    isConnecting: status === "connecting",
+    connect: () => printerManager.connect(),
+    disconnect: () => printerManager.disconnect(),
+    print: (data: ReceiptData) => printerManager.print(data),
+  };
+}
+
+// Fallback System Print
 export function printViaSystem() {
   window.print();
 }

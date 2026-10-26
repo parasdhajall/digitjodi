@@ -12,7 +12,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ThermalReceiptModal } from "@/components/ThermalReceiptModal";
-import type { ReceiptData } from "@/lib/thermalPrinter";
+import { PrinterStatusBadge } from "@/components/PrinterStatusBadge";
+import {
+  type ReceiptData,
+  printerManager,
+  generateEscPosBytes,
+} from "@/lib/thermalPrinter";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, useProfile, useTodayExpense } from "@/hooks/useAuth";
 import { GAMES, PLAYABLE, type GameType, fmtTime, resultLabel, isOpenPast, isClosePast } from "@/lib/matka";
@@ -456,6 +461,25 @@ function PlayPage() {
     setReceiptData(newReceipt);
     setIsReceiptOpen(true);
 
+    // Auto-Print Receipt if printer is connected
+    if (printerManager.isConnected()) {
+      toast.info(`🖨️ Printing slip on ${printerManager.deviceName}...`);
+      printerManager.sendBytes(generateEscPosBytes(newReceipt)).then((res) => {
+        if (res.success) {
+          toast.success("Receipt printed on thermal printer!");
+        } else {
+          toast.error(`Print failed: ${res.message}`);
+        }
+      });
+    } else {
+      toast("Tip: Connect your Bluetooth thermal printer to auto-print paper slips on confirm.", {
+        action: {
+          label: "Connect Printer",
+          onClick: () => printerManager.connect(),
+        },
+      });
+    }
+
     toast.success(
       `🎉 Success! Placed ${placedCount} bets on ${m?.name} (Total ₹${placedTotal})!`
     );
@@ -531,6 +555,8 @@ function PlayPage() {
           <h1 className="font-display text-2xl tracking-wider text-gold">{m.name}</h1>
 
           <div className="flex items-center gap-2">
+            <PrinterStatusBadge showTextOnMobile={false} />
+
             {receiptData && (
               <button
                 type="button"
@@ -1384,6 +1410,13 @@ function PlayPage() {
               <span className="font-bold text-base text-foreground">
                 Total Amount: <strong className="text-gold text-lg">₹{totalBucketAmount}</strong>
               </span>
+            </div>
+
+            <div className="flex items-center justify-between text-xs px-1 pt-1 border-t border-dashed border-border/80">
+              <span className="text-muted-foreground flex items-center gap-1.5 font-medium">
+                <Printer className="h-3.5 w-3.5 text-gold" /> Auto-print slip on confirm
+              </span>
+              <PrinterStatusBadge showTextOnMobile={true} />
             </div>
 
             <Button

@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth, useTodayExpense } from "@/hooks/useAuth";
 import { gameLabel, fmtIST } from "@/lib/matka";
 import { ThermalReceiptModal } from "@/components/ThermalReceiptModal";
+import { PrinterStatusBadge } from "@/components/PrinterStatusBadge";
 import type { ReceiptData } from "@/lib/thermalPrinter";
 
 export const Route = createFileRoute("/history")({
@@ -122,7 +123,10 @@ function History() {
     <main className="mx-auto max-w-3xl px-4 py-8">
       <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="font-display text-4xl tracking-wide text-gold">My Plays</h1>
-        <span className="text-xs text-muted-foreground">Recent 200 plays</span>
+        <div className="flex items-center gap-2">
+          <PrinterStatusBadge showTextOnMobile={true} />
+          <span className="text-xs text-muted-foreground hidden sm:inline">Recent 200 plays</span>
+        </div>
       </div>
 
       {/* Today's Expense Summary */}
