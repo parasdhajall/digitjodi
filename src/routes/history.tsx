@@ -43,33 +43,16 @@ function History() {
         <span className="text-xs text-muted-foreground">Recent 200 plays</span>
       </div>
 
-      {/* Today's Expense & Activity Summary */}
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <div className="rounded-xl border border-primary/30 bg-card p-3.5 shadow-sm">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Today's Bet (Expense)</span>
-          <div className="mt-1 flex items-baseline gap-1">
-            <span className="font-display text-2xl font-bold text-primary">₹{todayExp?.totalExpense ?? 0}</span>
-            <span className="text-xs text-muted-foreground">pts</span>
-          </div>
-          <span className="text-[11px] text-muted-foreground">{todayExp?.playsCount ?? 0} plays placed today</span>
+      {/* Today's Expense Summary */}
+      <div className="mb-6 rounded-xl border border-primary/30 bg-card p-4 shadow-sm">
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Today's Bet (Expense)</span>
+        <div className="mt-1 flex items-baseline gap-1.5">
+          <span className="font-display text-3xl font-bold text-primary">₹{todayExp?.totalExpense ?? 0}</span>
+          <span className="text-xs text-muted-foreground">total played today</span>
         </div>
-
-        <div className="rounded-xl border border-success/30 bg-card p-3.5 shadow-sm">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Today's Won</span>
-          <div className="mt-1 flex items-baseline gap-1">
-            <span className="font-display text-2xl font-bold text-success">₹{todayExp?.totalWinnings ?? 0}</span>
-            <span className="text-xs text-muted-foreground">pts</span>
-          </div>
-          <span className="text-[11px] text-muted-foreground">Payout credited</span>
-        </div>
-
-        <div className="col-span-2 sm:col-span-1 rounded-xl border bg-card p-3.5 shadow-sm flex flex-col justify-center">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Status</span>
-          <span className="mt-1 text-xs font-medium text-foreground">
-            {todayExp?.totalExpense ? "Bets active today" : "No bets placed today yet"}
-          </span>
-          <span className="text-[11px] text-muted-foreground">Times in IST (+05:30)</span>
-        </div>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {todayExp?.playsCount ?? 0} {todayExp?.playsCount === 1 ? "play" : "plays"} placed today
+        </p>
       </div>
       <div className="overflow-hidden rounded-xl border bg-card">
         <table className="w-full text-sm">

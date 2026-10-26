@@ -1,10 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { Clock, Play, Zap, Smartphone, TrendingUp, Coins, History } from "lucide-react";
+import { Clock, Play, Zap, Smartphone, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtTime, resultLabel, marketStatus } from "@/lib/matka";
-import { useAuth, useProfile, useTodayExpense } from "@/hooks/useAuth";
+import { useAuth, useTodayExpense } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -32,7 +32,6 @@ export const marketsQuery = {
 function Index() {
   const { data: markets, isLoading } = useQuery(marketsQuery);
   const { user } = useAuth();
-  const { data: profile } = useProfile(user?.id);
   const { data: todayExp } = useTodayExpense(user?.id);
 
   const isApp = typeof navigator !== "undefined" && (
@@ -70,49 +69,28 @@ function Index() {
         </div>
       </section>
 
-      {/* User Daily Expense & Balance Overview */}
+      {/* User Today's Expense Only */}
       {user && (
-        <section className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <div className="rounded-xl border border-primary/30 bg-card p-4 shadow-sm">
+        <section className="mb-6 rounded-xl border border-primary/30 bg-card p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div>
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Today's Bet (Expense)</span>
-            <div className="mt-1.5 flex items-baseline gap-1">
-              <span className="font-display text-3xl font-bold tracking-wide text-primary">
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <span className="font-display text-3xl sm:text-4xl font-bold tracking-wide text-primary">
                 ₹{todayExp?.totalExpense ?? 0}
               </span>
-              <span className="text-xs font-medium text-muted-foreground">pts</span>
+              <span className="text-xs text-muted-foreground">total bet played today</span>
             </div>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              {todayExp?.playsCount ?? 0} {todayExp?.playsCount === 1 ? "bet" : "bets"} placed today
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {todayExp?.playsCount ?? 0} {todayExp?.playsCount === 1 ? "bet" : "bets"} played today
             </p>
           </div>
 
-          <div className="rounded-xl border border-gold/30 bg-card p-4 shadow-sm">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Available Points</span>
-            <div className="mt-1.5 flex items-baseline gap-1">
-              <span className="font-display text-3xl font-bold tracking-wide text-gold">
-                {profile?.points ?? 0}
-              </span>
-              <span className="text-xs font-medium text-muted-foreground">pts</span>
-            </div>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Current account balance
-            </p>
-          </div>
-
-          <div className="col-span-2 sm:col-span-1 rounded-xl border bg-card p-4 shadow-sm flex flex-col justify-between">
-            <div>
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Today's Winnings</span>
-              <div className="mt-1.5 flex items-baseline gap-1">
-                <span className="font-display text-3xl font-bold tracking-wide text-success">
-                  ₹{todayExp?.totalWinnings ?? 0}
-                </span>
-                <span className="text-xs font-medium text-muted-foreground">pts</span>
-              </div>
-            </div>
-            <Link to="/history" className="mt-2 text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1">
-              <History className="h-3.5 w-3.5" /> View My Plays History &rarr;
-            </Link>
-          </div>
+          <Link
+            to="/history"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3.5 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10 transition-colors"
+          >
+            <History className="h-3.5 w-3.5" /> View My Plays &rarr;
+          </Link>
         </section>
       )}
 
