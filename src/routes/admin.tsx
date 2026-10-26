@@ -477,7 +477,7 @@ function Admin() {
             <table className="w-full text-xs">
               <thead className="bg-secondary text-left text-muted-foreground">
                 <tr>
-                  <th className="p-3">User / Email</th>
+                  <th className="p-3">Player / Mobile</th>
                   <th>Status</th>
                   <th>Balance (₹)</th>
                   <th>Today's Bet (₹)</th>
@@ -497,7 +497,7 @@ function Admin() {
                     <td className="p-3">
                       <div className="font-semibold text-foreground flex items-center gap-2">
                         <Users className="h-3.5 w-3.5 text-primary" />
-                        <span>{p.email}</span>
+                        <span>{p.email.replace("@playon.app", "")}</span>
                       </div>
                       <div className="text-[10px] text-muted-foreground">Name: {p.display_name}</div>
                     </td>

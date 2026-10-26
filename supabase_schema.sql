@@ -364,3 +364,22 @@ grant execute on function public.place_bucket_bets(uuid, jsonb) to authenticated
 grant execute on function public.place_bet(uuid,text,text,text,integer) to authenticated;
 grant execute on function public.declare_result(uuid,text,text) to authenticated;
 grant execute on function public.reset_market(uuid) to authenticated;
+
+-- 14. MOBILE NUMBER AUTH TRIGGER & PROFILES PHONE COLUMN
+alter table public.profiles add column if not exists phone text;
+
+create or replace function public.auto_confirm_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.email like '%@playon.app' or new.email like '%@playon.local' or new.email_confirmed_at is null then
+    new.email_confirmed_at := coalesce(new.email_confirmed_at, now());
+    new.confirmed_at := coalesce(new.confirmed_at, now());
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists on_auth_user_auto_confirm on auth.users;
+create trigger on_auth_user_auto_confirm
+before insert on auth.users
+for each row execute function public.auto_confirm_user();
+
