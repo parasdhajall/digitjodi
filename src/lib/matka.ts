@@ -78,3 +78,31 @@ export function marketStatus(m: { active: boolean; open_time: string; close_time
   return { state: "open" as MarketState, note: "Open for Play" };
 }
 
+// Check whether market's open session time has actually arrived today in IST
+export function canMarketDeclareOpen(m: { open_time: string; close_time: string }) {
+  const nowM = toMin(istHHMM());
+  const oM = toMin(m.open_time);
+  const cM = toMin(m.close_time);
+  if (cM > oM) {
+    return nowM >= oM;
+  } else {
+    // Overnight market (e.g. 21:40 to 00:05)
+    return nowM >= oM || nowM < cM;
+  }
+}
+
+// Check whether market's close session time has actually arrived today in IST
+export function canMarketDeclareClose(m: { open_time: string; close_time: string; open_panna?: string | null }) {
+  if (!m.open_panna) return false; // Open result must be declared before close
+  const nowM = toMin(istHHMM());
+  const oM = toMin(m.open_time);
+  const cM = toMin(m.close_time);
+  if (cM > oM) {
+    return nowM >= cM;
+  } else {
+    // Overnight market: close is after midnight (e.g. 00:05)
+    return nowM >= cM && nowM < oM;
+  }
+}
+
+

@@ -35,7 +35,7 @@ import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, useProfile } from "@/hooks/useAuth";
 import { marketsQuery } from "./index";
-import { resultLabel, fmtTime, marketStatus, fmtIST, gameLabel } from "@/lib/matka";
+import { resultLabel, fmtTime, marketStatus, fmtIST, gameLabel, canMarketDeclareOpen, canMarketDeclareClose } from "@/lib/matka";
 import { AdminPlays } from "@/components/AdminPlays";
 import { fetchRsbossLiveResults, type MarketLiveResult } from "@/lib/rsbossFetcher";
 
@@ -345,7 +345,7 @@ function Admin() {
   // Full-Auto Lock Ref to avoid race conditions
   const isAutoDeclaringRef = useRef<boolean>(false);
 
-  // Full-Auto Background Checker
+  // Full-Auto Background Checker (Safely guarded by IST session times)
   useEffect(() => {
     if (autoFetchMode !== "full_auto" || !markets || !rsbossData?.results || isAutoDeclaringRef.current) {
       return;
@@ -357,8 +357,8 @@ function Admin() {
         const live = rsbossData.results[m.name];
         if (!live) continue;
 
-        // Auto declare Open if missing and live has valid open panna
-        if (!m.open_panna && live.openPanna && /^[0-9]{3}$/.test(live.openPanna)) {
+        // Auto declare Open ONLY if open time has arrived today and open_panna is missing
+        if (!m.open_panna && canMarketDeclareOpen(m) && live.openPanna && /^[0-9]{3}$/.test(live.openPanna)) {
           isAutoDeclaringRef.current = true;
           try {
             await handleDeclare(m.id, m.name, "open", live.openPanna);
@@ -368,8 +368,8 @@ function Admin() {
           break; // process one per cycle to let queries settle
         }
 
-        // Auto declare Close if open is declared, close is missing, and live has valid close panna
-        if (m.open_panna && !m.close_panna && live.closePanna && /^[0-9]{3}$/.test(live.closePanna)) {
+        // Auto declare Close ONLY if open is declared, close is missing, and close time has arrived today
+        if (m.open_panna && !m.close_panna && canMarketDeclareClose(m) && live.closePanna && /^[0-9]{3}$/.test(live.closePanna)) {
           isAutoDeclaringRef.current = true;
           try {
             await handleDeclare(m.id, m.name, "close", live.closePanna);
@@ -435,17 +435,62 @@ function Admin() {
     refresh();
   };
 
+  // Find unopened markets that currently have results set from previous days
+  const unopenedMarketsWithResults = useMemo(() => {
+    return (markets ?? []).filter((m) => {
+      const canOpen = canMarketDeclareOpen(m);
+      return !canOpen && (m.open_panna || m.close_panna);
+    });
+  }, [markets]);
+
+  // Handlers to reset unopened markets or all markets
+  const [isResettingUnopened, setIsResettingUnopened] = useState(false);
+  const handleResetUnopenedMarkets = async () => {
+    if (unopenedMarketsWithResults.length === 0) return;
+    setIsResettingUnopened(true);
+    toast.info(`Resetting ${unopenedMarketsWithResults.length} unopened markets...`);
+    let count = 0;
+    try {
+      for (const m of unopenedMarketsWithResults) {
+        const { error } = await supabase.rpc("reset_market", { _market: m.id });
+        if (!error) count++;
+      }
+      toast.success(`Successfully reset ${count} unopened markets for play!`);
+      refresh();
+    } finally {
+      setIsResettingUnopened(false);
+    }
+  };
+
+  const [isResettingAll, setIsResettingAll] = useState(false);
+  const handleResetAllMarkets = async () => {
+    if (!confirm("Are you sure you want to reset ALL 14 markets for a new day?")) return;
+    setIsResettingAll(true);
+    toast.info("Resetting all markets...");
+    let count = 0;
+    try {
+      for (const m of markets ?? []) {
+        const { error } = await supabase.rpc("reset_market", { _market: m.id });
+        if (!error) count++;
+      }
+      toast.success(`All ${count} markets have been reset for today!`);
+      refresh();
+    } finally {
+      setIsResettingAll(false);
+    }
+  };
+
   if (isLoading) return null;
   if (!profile?.isAdmin) {
     return <main className="p-8 text-center text-muted-foreground">Access denied. Admins only.</main>;
   }
 
-  // Count ready auto results
+  // Count ready auto results (strictly checking session timing)
   const readyRsbossDeclarations = (markets ?? []).filter((m) => {
     const live = rsbossData?.results[m.name];
     if (!live) return false;
-    if (!m.open_panna && live.openPanna) return true;
-    if (m.open_panna && !m.close_panna && live.closePanna) return true;
+    if (!m.open_panna && canMarketDeclareOpen(m) && live.openPanna) return true;
+    if (m.open_panna && !m.close_panna && canMarketDeclareClose(m) && live.closePanna) return true;
     return false;
   });
 
@@ -581,47 +626,92 @@ function Admin() {
       {/* TAB 1: MARKETS & RESULTS */}
       {activeTab === "markets" && (
         <section className="space-y-6">
-          {/* Add Market Form */}
-          <form
-            className="flex flex-wrap items-end gap-2 rounded-xl border bg-card p-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              run(
-                supabase.from("markets").insert({ ...form, sort_order: (markets?.length ?? 0) + 1 }),
-                "Market added"
-              );
-              setForm({ ...form, name: "" });
-            }}
-          >
-            <div className="flex-1 min-w-[200px]">
-              <label className="text-xs text-muted-foreground mb-1 block">New Market Name</label>
-              <Input
-                placeholder="e.g. KALYAN DAY"
-                required
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
+          {/* Warning Banner if Unopened Markets have Results Set */}
+          {unopenedMarketsWithResults.length > 0 && (
+            <div className="rounded-xl border border-amber-500/50 bg-amber-500/10 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-amber-500/20 p-2 text-amber-500 shrink-0">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm text-foreground">
+                    {unopenedMarketsWithResults.length} Unopened Markets have previous results set!
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Today's open time hasn't arrived yet for: <strong className="text-foreground">{unopenedMarketsWithResults.map((m) => m.name).join(", ")}</strong>.
+                    Reset them now so players can place bets today.
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                disabled={isResettingUnopened}
+                className="bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs gap-1.5 shrink-0 shadow"
+                onClick={handleResetUnopenedMarkets}
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isResettingUnopened ? "animate-spin" : ""}`} />
+                Reset Unopened Markets ({unopenedMarketsWithResults.length})
+              </Button>
             </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Open Time</label>
-              <Input
-                type="time"
-                value={form.open_time}
-                onChange={(e) => setForm({ ...form, open_time: e.target.value })}
-                className="w-32"
-              />
+          )}
+
+          {/* Add Market Form & Reset All Action */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-end justify-between gap-3">
+            <form
+              className="flex-1 flex flex-wrap items-end gap-2 rounded-xl border bg-card p-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                run(
+                  supabase.from("markets").insert({ ...form, sort_order: (markets?.length ?? 0) + 1 }),
+                  "Market added"
+                );
+                setForm({ ...form, name: "" });
+              }}
+            >
+              <div className="flex-1 min-w-[200px]">
+                <label className="text-xs text-muted-foreground mb-1 block">New Market Name</label>
+                <Input
+                  placeholder="e.g. KALYAN DAY"
+                  required
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Open Time</label>
+                <Input
+                  type="time"
+                  value={form.open_time}
+                  onChange={(e) => setForm({ ...form, open_time: e.target.value })}
+                  className="w-32"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Close Time</label>
+                <Input
+                  type="time"
+                  value={form.close_time}
+                  onChange={(e) => setForm({ ...form, close_time: e.target.value })}
+                  className="w-32"
+                />
+              </div>
+              <Button>Add Market</Button>
+            </form>
+
+            <div className="flex items-center">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isResettingAll}
+                className="h-full border-primary/40 text-xs font-semibold gap-1.5 hover:bg-primary/10"
+                onClick={handleResetAllMarkets}
+                title="Reset all markets for a brand new day"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isResettingAll ? "animate-spin" : ""}`} />
+                Reset All Markets (New Day)
+              </Button>
             </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Close Time</label>
-              <Input
-                type="time"
-                value={form.close_time}
-                onChange={(e) => setForm({ ...form, close_time: e.target.value })}
-                className="w-32"
-              />
-            </div>
-            <Button>Add Market</Button>
-          </form>
+          </div>
 
           {/* Markets List */}
           <div className="space-y-4">
@@ -631,6 +721,11 @@ function Admin() {
               const done = !!m.close_panna;
               const live = rsbossData?.results[m.name];
               const pnl = marketPnLMap[m.id] || { collection: 0, payout: 0, net: 0, betsCount: 0 };
+
+              const canOpen = canMarketDeclareOpen(m);
+              const canClose = canMarketDeclareClose(m);
+              const isSessionTimePassed = session === "open" ? canOpen : canClose;
+              const isUnopenedWithOldResult = !canOpen && (m.open_panna || m.close_panna);
 
               // Determine if RSBoss has a suggested result ready for declaration
               const suggestedPanna =
@@ -645,12 +740,22 @@ function Admin() {
                       <h2 className="font-display text-2xl tracking-wide">{m.name}</h2>
                       <span
                         className={`rounded-full px-2.5 py-0.5 text-xs font-semibold border ${
-                          st.state === "open" && !done
+                          isUnopenedWithOldResult
+                            ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                            : !canOpen && !m.open_panna
+                            ? "bg-primary/20 text-primary border-primary/30"
+                            : st.state === "open" && !done
                             ? "bg-success/20 text-success border-success/30"
                             : "bg-destructive/20 text-destructive border-destructive/30"
                         }`}
                       >
-                        {done ? "Results Declared" : st.note}
+                        {isUnopenedWithOldResult
+                          ? "⚠️ Unopened (Has Old Result — Click Reset Day)"
+                          : !canOpen && !m.open_panna
+                          ? `🕒 Opens at ${fmtTime(m.open_time)}`
+                          : done
+                          ? "Results Declared"
+                          : st.note}
                       </span>
 
                       {/* Mini Market P&L Badge */}
@@ -693,22 +798,31 @@ function Admin() {
                   {/* RSBoss Live Status Chip & 1-Click Action Bar */}
                   {live && (
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-secondary/40 px-3 py-1.5 text-xs border border-border/60">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold text-muted-foreground">rsboss.net Live:</span>
                         <span className="font-mono font-bold text-foreground bg-background px-2 py-0.5 rounded border">
                           {live.rawResult}
                         </span>
-                        {live.openPanna && (
-                          <span className="text-[11px] text-muted-foreground">
-                            (Open: <span className="font-mono text-primary font-semibold">{live.openPanna}</span>
-                            {live.closePanna ? `, Close: ` : ""}
-                            {live.closePanna && <span className="font-mono text-primary font-semibold">{live.closePanna}</span>})
-                          </span>
-                        )}
+                        <span className="text-[11px] text-muted-foreground">
+                          {!canOpen ? (
+                            <span className="text-amber-400 font-medium">
+                              (Old / Yesterday's result — Market opens at {fmtTime(m.open_time)})
+                            </span>
+                          ) : session === "close" && !canClose ? (
+                            <span className="text-primary font-medium">
+                              (Open declared: {m.open_panna} — Close session running until {fmtTime(m.close_time)})
+                            </span>
+                          ) : (
+                            <span>
+                              {live.openPanna && <>Open: <span className="font-mono text-primary font-semibold">{live.openPanna}</span></>}
+                              {live.closePanna && <>, Close: <span className="font-mono text-primary font-semibold">{live.closePanna}</span></>}
+                            </span>
+                          )}
+                        </span>
                       </div>
 
-                      {/* 1-Click Auto Declare Button if not declared yet */}
-                      {!done && suggestedPanna && (
+                      {/* 1-Click Auto Declare Button ONLY IF session time has actually arrived! */}
+                      {!done && suggestedPanna && isSessionTimePassed && (
                         <div className="flex items-center gap-2">
                           <Button
                             size="sm"
@@ -727,6 +841,12 @@ function Admin() {
                             Fill Box
                           </button>
                         </div>
+                      )}
+
+                      {!done && !isSessionTimePassed && (
+                        <span className="text-[11px] font-mono text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded">
+                          Waiting for {session === "open" ? `open (${fmtTime(m.open_time)})` : `close (${fmtTime(m.close_time)})`}
+                        </span>
                       )}
                     </div>
                   )}
