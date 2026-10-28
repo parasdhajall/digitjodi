@@ -105,4 +105,51 @@ export function canMarketDeclareClose(m: { open_time: string; close_time: string
   }
 }
 
+// Get player display name for receipts (avoids printing emails or 10-digit mobile numbers)
+export function getPlayerDisplayName(
+  user?: { email?: string | null; user_metadata?: Record<string, any> } | null,
+  profile?: { display_name?: string | null } | null
+): string {
+  // 1. Saved custom player name from local storage
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("preferred_player_name")?.trim();
+    if (saved && saved.length > 0) return saved;
+  }
+
+  // 2. User metadata from auth signup (display_name, full_name, name)
+  const meta = user?.user_metadata;
+  const metaName = (meta?.display_name || meta?.full_name || meta?.name)?.toString().trim();
+  if (metaName && !metaName.includes("@") && !/^\d{10}$/.test(metaName)) {
+    return metaName;
+  }
+
+  // 3. Profile display_name
+  const profName = profile?.display_name?.toString().trim();
+  if (profName && !profName.includes("@") && !/^\d{10}$/.test(profName)) {
+    return profName;
+  }
+
+  // 4. If metaName or profName exists but has email or special characters
+  const candidate = metaName || profName || "";
+  if (candidate) {
+    if (candidate.includes("@")) {
+      const part = candidate.split("@")[0].trim();
+      if (!/^\d+$/.test(part)) return part;
+    } else if (!/^\d{10}$/.test(candidate)) {
+      return candidate;
+    }
+  }
+
+  // 5. Fallback from email prefix if it's not purely a phone number
+  if (user?.email) {
+    const part = user.email.split("@")[0].trim();
+    if (!/^\d+$/.test(part)) {
+      return part;
+    }
+  }
+
+  return "Player";
+}
+
+
 

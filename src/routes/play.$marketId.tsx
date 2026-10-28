@@ -26,7 +26,7 @@ import {
 } from "@/lib/thermalPrinter";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, useProfile, useTodayExpense } from "@/hooks/useAuth";
-import { GAMES, PLAYABLE, type GameType, fmtTime, resultLabel, isOpenPast, isClosePast } from "@/lib/matka";
+import { GAMES, PLAYABLE, type GameType, fmtTime, resultLabel, isOpenPast, isClosePast, getPlayerDisplayName } from "@/lib/matka";
 import {
   SINGLE_PANNA_BY_ANK,
   DOUBLE_PANNA_BY_ANK,
@@ -553,7 +553,7 @@ function PlayPage() {
     const newReceipt: ReceiptData = {
       slipId: `PO-${Date.now().toString().slice(-6)}`,
       marketName: m?.name || "MARKET",
-      playerName: profile?.display_name || user?.email || "Player",
+      playerName: getPlayerDisplayName(user, profile),
       dateStr,
       timeStr,
       items: bucket.map((b) => ({

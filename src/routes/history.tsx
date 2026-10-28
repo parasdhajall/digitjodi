@@ -4,8 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth, useTodayExpense } from "@/hooks/useAuth";
-import { gameLabel, fmtIST } from "@/lib/matka";
+import { useAuth, useProfile, useTodayExpense } from "@/hooks/useAuth";
+import { gameLabel, fmtIST, getPlayerDisplayName } from "@/lib/matka";
 import { ThermalReceiptModal } from "@/components/ThermalReceiptModal";
 import { PrinterStatusBadge } from "@/components/PrinterStatusBadge";
 import type { ReceiptData } from "@/lib/thermalPrinter";
@@ -30,6 +30,7 @@ const statusCls: Record<string, string> = {
 
 function History() {
   const { user, loading } = useAuth();
+  const { data: profile } = useProfile(user?.id);
   const { data: todayExp } = useTodayExpense(user?.id);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
   const [isReceiptOpen, setIsReceiptOpen] = useState(false);
@@ -68,7 +69,7 @@ function History() {
     setReceiptData({
       slipId: b.id.slice(0, 8).toUpperCase(),
       marketName: b.markets?.name || "MARKET",
-      playerName: user?.email || "Player",
+      playerName: getPlayerDisplayName(user, profile),
       dateStr,
       timeStr,
       items: [
@@ -105,7 +106,7 @@ function History() {
     setReceiptData({
       slipId: `TD-${Date.now().toString().slice(-6)}`,
       marketName: "TODAY'S PLAYS",
-      playerName: user?.email || "Player",
+      playerName: getPlayerDisplayName(user, profile),
       dateStr,
       timeStr,
       items: todayBets.map((b) => ({

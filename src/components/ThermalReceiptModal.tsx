@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Printer, Smartphone, CheckCircle2, X, Download } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Printer, Smartphone, CheckCircle2, X, Download, Pencil, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,13 +29,30 @@ export function ThermalReceiptModal({
 }: ThermalReceiptModalProps) {
   const [printing, setPrinting] = useState(false);
   const { isConnected, deviceName } = usePrinter();
+  const [playerName, setPlayerName] = useState(receiptData?.playerName || "Player");
+  const [isEditingName, setIsEditingName] = useState(false);
+
+  useEffect(() => {
+    if (receiptData?.playerName) {
+      setPlayerName(receiptData.playerName);
+    }
+  }, [receiptData]);
 
   if (!receiptData) return null;
+
+  const handleUpdateName = (val: string) => {
+    setPlayerName(val);
+    receiptData.playerName = val;
+    if (typeof window !== "undefined") {
+      localStorage.setItem("preferred_player_name", val.trim());
+    }
+  };
 
   const handleBluetoothPrint = async () => {
     setPrinting(true);
     toast.info("Sending print to thermal printer...");
-    const res = await printerManager.print(receiptData);
+    const dataToPrint = { ...receiptData, playerName: playerName.trim() || "Player" };
+    const res = await printerManager.print(dataToPrint);
     setPrinting(false);
 
     if (res.success) {
@@ -85,8 +102,40 @@ export function ThermalReceiptModal({
               <div className="text-[10px] text-gray-700">
                 {receiptData.dateStr} · {receiptData.timeStr}
               </div>
-              <div className="text-[10px] text-gray-700">
-                Player: <strong>{receiptData.playerName}</strong>
+              <div className="flex items-center justify-center gap-1.5 text-[10px] text-gray-700">
+                <span>Player:</span>
+                {isEditingName ? (
+                  <div className="inline-flex items-center gap-1">
+                    <input
+                      type="text"
+                      value={playerName}
+                      onChange={(e) => handleUpdateName(e.target.value)}
+                      onBlur={() => setIsEditingName(false)}
+                      onKeyDown={(e) => e.key === "Enter" && setIsEditingName(false)}
+                      autoFocus
+                      placeholder="Player Name"
+                      className="h-5 px-1.5 border border-primary/50 bg-amber-50/80 rounded text-[11px] font-bold text-black text-center w-28 outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingName(false)}
+                      className="p-0.5 rounded bg-emerald-500 text-white cursor-pointer"
+                      title="Save name"
+                    >
+                      <Check className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingName(true)}
+                    className="font-bold underline decoration-dotted text-gray-900 hover:text-primary inline-flex items-center gap-1 cursor-pointer"
+                    title="Click to edit player name for slip"
+                  >
+                    <span>{playerName}</span>
+                    <Pencil className="h-2.5 w-2.5 text-gray-500 hover:text-primary" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -178,7 +227,7 @@ export function ThermalReceiptModal({
           <div style={{ fontSize: "12px", fontWeight: "bold" }}>{receiptData.marketName.toUpperCase()}</div>
           <div style={{ fontSize: "10px" }}>Slip: #{receiptData.slipId}</div>
           <div style={{ fontSize: "10px" }}>{receiptData.dateStr} {receiptData.timeStr}</div>
-          <div style={{ fontSize: "10px" }}>Player: {receiptData.playerName}</div>
+          <div style={{ fontSize: "10px" }}>Player: {playerName}</div>
         </div>
 
         <table style={{ width: "100%", fontSize: "11px", marginTop: "4px", borderCollapse: "collapse" }}>
