@@ -26,8 +26,8 @@ export function generateEscPosBytes(data: ReceiptData): Uint8Array {
   const add = (str: string) => parts.push(encoder.encode(str));
   const addBytes = (bytes: number[]) => parts.push(new Uint8Array(bytes));
 
-  // 1. Initialize printer
-  addBytes([0x1b, 0x40]); // ESC @
+  // 1. Initialize printer (ESC @)
+  addBytes([0x1b, 0x40]);
 
   // 2. Center Align Header
   addBytes([0x1b, 0x61, 0x01]); // ESC a 1 (center)
@@ -73,10 +73,11 @@ export function generateEscPosBytes(data: ReceiptData): Uint8Array {
   // Footer Center
   addBytes([0x1b, 0x61, 0x01]); // center
   add("Good Luck! Thank You!\n");
-  add("Keep this slip safe\n\n\n\n"); // Feed lines
+  add("Keep this slip safe\n\n\n\n\n"); // Extra paper feed lines so text rolls out completely
 
   // Cut paper (partial cut)
   addBytes([0x1d, 0x56, 0x41, 0x10]);
+  addBytes([0x0a, 0x0a]); // flush lines
 
   // Combine into single Uint8Array
   const totalLength = parts.reduce((acc, p) => acc + p.length, 0);
@@ -102,18 +103,19 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// Common Thermal Printer Bluetooth GATT Service UUIDs
 const COMMON_PRINTER_SERVICES = [
-  "000018f0-0000-1000-8000-00805f9b34fb", // standard ESC/POS
+  "49535343-fe7d-4ae5-8fa9-9fafd205e455", // ISSC transparent UART (most common)
   "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // Everycom / generic POS
-  "49535343-fe7d-4ae5-8fa9-9fafd205e455", // ISSC transparent UART
+  "000018f0-0000-1000-8000-00805f9b34fb", // Standard ESC/POS
+  "0000ff00-0000-1000-8000-00805f9b34fb", // FF00 generic thermal
+  "0000ffe0-0000-1000-8000-00805f9b34fb", // HM-10 / CC2541 UART (very common in 58mm)
+  "0000fff0-0000-1000-8000-00805f9b34fb", // FFF0 printer UART
   "0000ae00-0000-1000-8000-00805f9b34fb",
   "0000ae30-0000-1000-8000-00805f9b34fb",
   "0000af30-0000-1000-8000-00805f9b34fb",
-  "0000ff00-0000-1000-8000-00805f9b34fb",
   "0000fee7-0000-1000-8000-00805f9b34fb",
-  "00001800-0000-1000-8000-00805f9b34fb",
-  "00001801-0000-1000-8000-00805f9b34fb",
-  "0000180a-0000-1000-8000-00805f9b34fb",
+  "de5bf728-d711-4e47-af26-65e3012a5dc7", // Zijiang / Mstar
 ];
 
 // Persistent Bluetooth Printer Manager Singleton
@@ -241,21 +243,72 @@ class BluetoothPrinterManager {
       const server = await device.gatt.connect();
       const services = await server.getPrimaryServices();
 
+      // Known printer characteristics to prioritize
+      const KNOWN_WRITE_CHARS = [
+        "49535343-8841-43f4-a8d4-ecbe34729bb3", // ISSC transparent write
+        "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f", // POS write
+        "0000ff02-0000-1000-8000-00805f9b34fb", // FF02 write
+        "0000ffe1-0000-1000-8000-00805f9b34fb", // HM-10 UART write
+        "0000fff1-0000-1000-8000-00805f9b34fb", // FFF1 write
+        "0000fff2-0000-1000-8000-00805f9b34fb", // FFF2 write
+        "00002af1-0000-1000-8000-00805f9b34fb", // ESC/POS write
+      ];
+
       let foundWriteChar: any = null;
 
       for (const service of services) {
+        const sUuid = service.uuid.toLowerCase();
+
+        // STRICTLY IGNORE standard Bluetooth system services to avoid binding to Device Name (0x2A00)
+        if (
+          sUuid.includes("1800-") ||
+          sUuid.includes("1801-") ||
+          sUuid.includes("180a-") ||
+          sUuid.includes("180f-")
+        ) {
+          continue;
+        }
+
         try {
           const chars = await service.getCharacteristics();
           for (const c of chars) {
-            if (c.properties.write || c.properties.writeWithoutResponse) {
-              foundWriteChar = c;
-              break;
+            const cUuid = c.uuid.toLowerCase();
+
+            // Ignore standard read-only/metadata characteristics
+            if (
+              cUuid.includes("2a00-") ||
+              cUuid.includes("2a01-") ||
+              cUuid.includes("2a02-") ||
+              cUuid.includes("2a03-") ||
+              cUuid.includes("2a04-") ||
+              cUuid.includes("2a05-") ||
+              cUuid.includes("2a19-") ||
+              cUuid.includes("2a29-")
+            ) {
+              continue;
+            }
+
+            if (c.properties.writeWithoutResponse || c.properties.write) {
+              // If it's a known dedicated printer write characteristic, take it immediately!
+              if (KNOWN_WRITE_CHARS.some((k) => cUuid.includes(k.slice(0, 8)))) {
+                foundWriteChar = c;
+                break;
+              }
+              // Otherwise keep as candidate
+              if (!foundWriteChar) {
+                foundWriteChar = c;
+              }
             }
           }
         } catch {
           // ignore restricted services
         }
-        if (foundWriteChar) break;
+        if (
+          foundWriteChar &&
+          KNOWN_WRITE_CHARS.some((k) => foundWriteChar.uuid.toLowerCase().includes(k.slice(0, 8)))
+        ) {
+          break;
+        }
       }
 
       if (!foundWriteChar) {
@@ -309,14 +362,20 @@ class BluetoothPrinterManager {
     }
 
     try {
-      const chunkSize = 100;
+      // Android Chrome BLE requires 20-byte MTU chunks with a small delay between chunks
+      // Without this, Android BLE drops chunks or fails silently
+      const chunkSize = 20;
       for (let i = 0; i < bytes.length; i += chunkSize) {
         const chunk = bytes.slice(i, i + chunkSize);
-        if (this.writeChar.writeValueWithoutResponse) {
+        if (this.writeChar.properties.writeWithoutResponse && this.writeChar.writeValueWithoutResponse) {
           await this.writeChar.writeValueWithoutResponse(chunk);
+        } else if (this.writeChar.writeValueWithResponse) {
+          await this.writeChar.writeValueWithResponse(chunk);
         } else {
           await this.writeChar.writeValue(chunk);
         }
+        // Essential 20ms pause for Android BLE buffer to flush to printer UART
+        await new Promise((resolve) => setTimeout(resolve, 20));
       }
       return { success: true, message: "Receipt printed successfully!" };
     } catch (err: any) {
