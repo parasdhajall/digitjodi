@@ -32,6 +32,11 @@ public class BluetoothPrinterBridge {
     private static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
     public static final int PERMISSION_REQUEST_CODE = 1001;
 
+    // Persistent Socket to eliminate reconnect delay
+    private static BluetoothSocket activeSocket = null;
+    private static String activeAddress = null;
+    private static String activeDeviceName = null;
+
     private final Activity activity;
     private final WebView webView;
     private final BluetoothAdapter bluetoothAdapter;
@@ -91,6 +96,11 @@ public class BluetoothPrinterBridge {
     }
 
     @JavascriptInterface
+    public boolean isSocketConnected() {
+        return activeSocket != null && activeSocket.isConnected();
+    }
+
+    @JavascriptInterface
     public void openBluetoothSettings() {
         try {
             Intent intent = new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
@@ -132,7 +142,52 @@ public class BluetoothPrinterBridge {
     }
 
     @JavascriptInterface
-    public String print(String deviceAddress, String base64EscPos) {
+    public synchronized void disconnect() {
+        if (activeSocket != null) {
+            try {
+                activeSocket.close();
+            } catch (Exception ignored) {}
+            activeSocket = null;
+            activeAddress = null;
+            activeDeviceName = null;
+        }
+    }
+
+    // Connect to printer socket in advance so print is instant
+    @JavascriptInterface
+    public synchronized String connect(String deviceAddress) {
+        JSONObject res = new JSONObject();
+        if (activeSocket != null && activeSocket.isConnected()) {
+            if (deviceAddress == null || deviceAddress.isEmpty() || (activeAddress != null && activeAddress.equalsIgnoreCase(deviceAddress))) {
+                try {
+                    res.put("success", true);
+                    res.put("message", "Already connected to " + activeDeviceName);
+                    res.put("deviceName", activeDeviceName);
+                    res.put("deviceAddress", activeAddress);
+                    return res.toString();
+                } catch (Exception ignored) {}
+            }
+        }
+
+        BluetoothDevice dev = findDevice(deviceAddress);
+        if (dev == null) {
+            return errorJson("No printer found. Please pair printer first.");
+        }
+
+        try {
+            openSocket(dev);
+            res.put("success", true);
+            res.put("message", "Connected to " + dev.getName());
+            res.put("deviceName", dev.getName());
+            res.put("deviceAddress", dev.getAddress());
+            return res.toString();
+        } catch (Exception e) {
+            return errorJson("Connection failed: " + e.getMessage());
+        }
+    }
+
+    @JavascriptInterface
+    public synchronized String print(String deviceAddress, String base64EscPos) {
         JSONObject res = new JSONObject();
         if (bluetoothAdapter == null) {
             return errorJson("Bluetooth is not supported on this device.");
@@ -147,88 +202,52 @@ public class BluetoothPrinterBridge {
             return errorJson("Bluetooth permission required. Please allow permission and try again.");
         }
 
-        BluetoothDevice targetDevice = null;
+        byte[] data;
         try {
-            Set<BluetoothDevice> bonded = bluetoothAdapter.getBondedDevices();
-            if (bonded == null || bonded.isEmpty()) {
-                return errorJson("No paired Bluetooth printer found! Please pair your printer in phone Bluetooth Settings first.");
-            }
-
-            // Find matching device
-            if (deviceAddress != null && !deviceAddress.trim().isEmpty()) {
-                for (BluetoothDevice dev : bonded) {
-                    if (dev.getAddress().equalsIgnoreCase(deviceAddress.trim())) {
-                        targetDevice = dev;
-                        break;
-                    }
-                }
-            }
-
-            // If not found by address, find first likely printer or fallback to first paired device
-            if (targetDevice == null) {
-                for (BluetoothDevice dev : bonded) {
-                    String name = dev.getName() != null ? dev.getName().toLowerCase() : "";
-                    if (name.contains("print") || name.contains("pos") || name.contains("mtp") || name.contains("inner") || name.contains("rp") || name.contains("mpt")) {
-                        targetDevice = dev;
-                        break;
-                    }
-                }
-            }
-
-            if (targetDevice == null) {
-                targetDevice = bonded.iterator().next();
-            }
-        } catch (SecurityException se) {
-            requestPermissions();
-            return errorJson("Bluetooth permission required. Please allow permission and try again.");
+            data = Base64.decode(base64EscPos, Base64.NO_WRAP);
         } catch (Exception e) {
-            return errorJson("Error finding printer: " + e.getMessage());
+            return errorJson("Invalid print data.");
         }
 
-        if (targetDevice == null) {
-            return errorJson("No printer selected.");
-        }
+        // FAST PATH: If already connected to target printer, send data INSTANTLY without reconnecting!
+        if (activeSocket != null && activeSocket.isConnected()) {
+            boolean addressMatches = deviceAddress == null || deviceAddress.trim().isEmpty() ||
+                    (activeAddress != null && activeAddress.equalsIgnoreCase(deviceAddress.trim()));
 
-        // Connect and print via RFCOMM / SPP
-        BluetoothSocket socket = null;
-        try {
-            bluetoothAdapter.cancelDiscovery();
-
-            // Try standard SPP UUID first
-            try {
-                socket = targetDevice.createRfcommSocketToServiceRecord(SPP_UUID);
-                socket.connect();
-            } catch (Exception ex) {
-                // Fallback to reflection port 1 if UUID connection fails
+            if (addressMatches) {
                 try {
-                    Method m = targetDevice.getClass().getMethod("createRfcommSocket", int.class);
-                    socket = (BluetoothSocket) m.invoke(targetDevice, 1);
-                    if (socket != null) {
-                        socket.connect();
-                    }
-                } catch (Exception reflectionEx) {
-                    throw new Exception("Could not connect to " + targetDevice.getName() + " (" + targetDevice.getAddress() + "). Make sure printer is ON.");
+                    OutputStream os = activeSocket.getOutputStream();
+                    os.write(data);
+                    os.flush();
+
+                    res.put("success", true);
+                    res.put("message", "Receipt printed instantly to " + activeDeviceName + "!");
+                    res.put("deviceName", activeDeviceName);
+                    res.put("deviceAddress", activeAddress);
+                    return res.toString();
+                } catch (Exception writeEx) {
+                    // Socket was broken, close and reconnect below
+                    try { activeSocket.close(); } catch (Exception ignored) {}
+                    activeSocket = null;
+                    activeAddress = null;
+                    activeDeviceName = null;
                 }
             }
+        }
 
-            if (socket == null || !socket.isConnected()) {
-                throw new Exception("Socket connection failed.");
-            }
+        // RECONNECT PATH: Find device and connect once, then KEEP ALIVE
+        BluetoothDevice targetDevice = findDevice(deviceAddress);
+        if (targetDevice == null) {
+            return errorJson("No paired Bluetooth printer found! Please pair in Bluetooth settings first.");
+        }
 
-            byte[] data = Base64.decode(base64EscPos, Base64.NO_WRAP);
-            OutputStream os = socket.getOutputStream();
+        try {
+            openSocket(targetDevice);
+            OutputStream os = activeSocket.getOutputStream();
             os.write(data);
             os.flush();
 
-            // Small sleep to ensure printer buffer completes
-            try {
-                Thread.sleep(300);
-            } catch (InterruptedException ignored) {}
-
-            try {
-                socket.close();
-            } catch (Exception ignored) {}
-
+            // DO NOT CLOSE SOCKET! Keep it open for zero-delay instant printing on next play!
             res.put("success", true);
             res.put("message", "Receipt printed successfully to " + targetDevice.getName() + "!");
             res.put("deviceName", targetDevice.getName());
@@ -236,11 +255,79 @@ public class BluetoothPrinterBridge {
             return res.toString();
 
         } catch (Exception e) {
-            if (socket != null) {
-                try { socket.close(); } catch (Exception ignored) {}
+            if (activeSocket != null) {
+                try { activeSocket.close(); } catch (Exception ignored) {}
+                activeSocket = null;
+                activeAddress = null;
+                activeDeviceName = null;
             }
             return errorJson(e.getMessage() != null ? e.getMessage() : "Failed to print.");
         }
+    }
+
+    private BluetoothDevice findDevice(String deviceAddress) {
+        try {
+            Set<BluetoothDevice> bonded = bluetoothAdapter.getBondedDevices();
+            if (bonded == null || bonded.isEmpty()) return null;
+
+            if (deviceAddress != null && !deviceAddress.trim().isEmpty()) {
+                for (BluetoothDevice dev : bonded) {
+                    if (dev.getAddress().equalsIgnoreCase(deviceAddress.trim())) {
+                        return dev;
+                    }
+                }
+            }
+
+            for (BluetoothDevice dev : bonded) {
+                String name = dev.getName() != null ? dev.getName().toLowerCase() : "";
+                if (name.contains("print") || name.contains("pos") || name.contains("mtp") ||
+                    name.contains("inner") || name.contains("rp") || name.contains("mpt") ||
+                    name.contains("veer") || name.contains("seznik") || name.contains("bt")) {
+                    return dev;
+                }
+            }
+
+            return bonded.iterator().next();
+        } catch (SecurityException se) {
+            requestPermissions();
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void openSocket(BluetoothDevice device) throws Exception {
+        if (activeSocket != null) {
+            try { activeSocket.close(); } catch (Exception ignored) {}
+            activeSocket = null;
+        }
+
+        bluetoothAdapter.cancelDiscovery();
+
+        // 1. Try standard SPP UUID
+        try {
+            activeSocket = device.createRfcommSocketToServiceRecord(SPP_UUID);
+            activeSocket.connect();
+        } catch (Exception ex) {
+            // 2. Fallback to reflection port 1 if UUID connection fails
+            try {
+                Method m = device.getClass().getMethod("createRfcommSocket", int.class);
+                activeSocket = (BluetoothSocket) m.invoke(device, 1);
+                if (activeSocket != null) {
+                    activeSocket.connect();
+                }
+            } catch (Exception reflectionEx) {
+                activeSocket = null;
+                throw new Exception("Could not connect to " + device.getName() + ". Make sure printer is turned ON.");
+            }
+        }
+
+        if (activeSocket == null || !activeSocket.isConnected()) {
+            throw new Exception("Socket connection failed.");
+        }
+
+        activeAddress = device.getAddress();
+        activeDeviceName = device.getName();
     }
 
     private String errorJson(String message) {
@@ -254,4 +341,3 @@ public class BluetoothPrinterBridge {
         }
     }
 }
-

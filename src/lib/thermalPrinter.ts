@@ -134,6 +134,12 @@ class BluetoothPrinterManager {
       this.deviceAddress = localStorage.getItem("last_printer_address") || null;
       if (isAndroidNativeApp() && this.deviceName) {
         this.status = "connected";
+        const bridge = (window as any).AndroidBridge;
+        if (bridge && bridge.connect && this.deviceAddress) {
+          try {
+            bridge.connect(this.deviceAddress);
+          } catch (ignored) {}
+        }
       }
     }
   }
@@ -187,7 +193,7 @@ class BluetoothPrinterManager {
         }
 
         const target = devices.find((d) =>
-          /print|pos|mtp|inner|rp|mpt|bluetooth/i.test(d.name)
+          /print|pos|mtp|inner|rp|mpt|veer|seznik|bluetooth/i.test(d.name)
         ) || devices[0];
 
         this.deviceName = target.name;
@@ -198,6 +204,14 @@ class BluetoothPrinterManager {
           localStorage.setItem("last_printer_name", target.name);
           localStorage.setItem("last_printer_address", target.address);
         }
+
+        // Pre-connect persistent socket in advance so printing is instant
+        if (bridge.connect) {
+          try {
+            bridge.connect(target.address);
+          } catch (ignored) {}
+        }
+
         this.notify();
         return {
           success: true,
@@ -340,6 +354,14 @@ class BluetoothPrinterManager {
 
   // Disconnect
   public disconnect() {
+    if (isAndroidNativeApp()) {
+      const bridge = (window as any).AndroidBridge;
+      if (bridge && bridge.disconnect) {
+        try {
+          bridge.disconnect();
+        } catch (ignored) {}
+      }
+    }
     if (this.device && this.device.gatt && this.device.gatt.connected) {
       this.device.gatt.disconnect();
     }
