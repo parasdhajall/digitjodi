@@ -1,4 +1,4 @@
-// Thermal Printer Utility for 58mm Bluetooth Printers (ESC/POS & System Print)
+// Thermal Printer Utility for 58mm Bluetooth Printers (Native Android Bridge + ESC/POS + Web Bluetooth)
 import { useState, useEffect } from "react";
 
 export type ReceiptData = {
@@ -89,6 +89,19 @@ export function generateEscPosBytes(data: ReceiptData): Uint8Array {
   return result;
 }
 
+export function isAndroidNativeApp(): boolean {
+  return typeof window !== "undefined" && typeof (window as any).AndroidBridge !== "undefined";
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 const COMMON_PRINTER_SERVICES = [
   "000018f0-0000-1000-8000-00805f9b34fb", // standard ESC/POS
   "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // Everycom / generic POS
@@ -110,11 +123,16 @@ class BluetoothPrinterManager {
   private writeChar: any = null;
   public status: PrinterStatus = "disconnected";
   public deviceName: string | null = null;
+  public deviceAddress: string | null = null;
   private listeners: Set<() => void> = new Set();
 
   constructor() {
     if (typeof window !== "undefined") {
       this.deviceName = localStorage.getItem("last_printer_name") || null;
+      this.deviceAddress = localStorage.getItem("last_printer_address") || null;
+      if (isAndroidNativeApp() && this.deviceName) {
+        this.status = "connected";
+      }
     }
   }
 
@@ -128,11 +146,70 @@ class BluetoothPrinterManager {
   }
 
   public isConnected(): boolean {
+    if (isAndroidNativeApp()) {
+      return this.status === "connected" && !!this.deviceName;
+    }
     return this.status === "connected" && !!this.writeChar;
   }
 
   // Connect to Bluetooth Printer
   public async connect(): Promise<{ success: boolean; message: string }> {
+    // 1. Native Android App Bridge
+    if (isAndroidNativeApp()) {
+      const bridge = (window as any).AndroidBridge;
+      if (!bridge.isBluetoothEnabled()) {
+        return {
+          success: false,
+          message: "Mobile Bluetooth OFF hai. Kripya Bluetooth ON karein.",
+        };
+      }
+      if (!bridge.hasPermissions()) {
+        bridge.requestPermissions();
+        return {
+          success: false,
+          message: "Bluetooth permission allow karein aur dubara connect karein.",
+        };
+      }
+
+      try {
+        const raw = bridge.getPairedDevices();
+        const devices: { name: string; address: string }[] = JSON.parse(raw || "[]");
+        if (!devices || devices.length === 0) {
+          if (bridge.openBluetoothSettings) {
+            bridge.openBluetoothSettings();
+          }
+          return {
+            success: false,
+            message: "Koi paired Bluetooth printer nahi mila. Phone settings me pehle printer pair karein.",
+          };
+        }
+
+        const target = devices.find((d) =>
+          /print|pos|mtp|inner|rp|mpt|bluetooth/i.test(d.name)
+        ) || devices[0];
+
+        this.deviceName = target.name;
+        this.deviceAddress = target.address;
+        this.status = "connected";
+
+        if (typeof window !== "undefined") {
+          localStorage.setItem("last_printer_name", target.name);
+          localStorage.setItem("last_printer_address", target.address);
+        }
+        this.notify();
+        return {
+          success: true,
+          message: `Connected to ${target.name}!`,
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          message: err.message || "Failed to load paired devices.",
+        };
+      }
+    }
+
+    // 2. Web Bluetooth API (for Chrome browser)
     const nav = navigator as any;
     if (!nav.bluetooth) {
       return {
@@ -216,10 +293,16 @@ class BluetoothPrinterManager {
     this.status = "disconnected";
     this.writeChar = null;
     this.server = null;
+    this.deviceName = null;
+    this.deviceAddress = null;
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("last_printer_name");
+      localStorage.removeItem("last_printer_address");
+    }
     this.notify();
   }
 
-  // Send raw ESC/POS bytes to connected printer
+  // Send raw ESC/POS bytes to connected printer (Web Bluetooth)
   public async sendBytes(bytes: Uint8Array): Promise<{ success: boolean; message: string }> {
     if (!this.isConnected()) {
       return { success: false, message: "Printer is not connected." };
@@ -237,7 +320,6 @@ class BluetoothPrinterManager {
       }
       return { success: true, message: "Receipt printed successfully!" };
     } catch (err: any) {
-      // Disconnect if error
       this.status = "disconnected";
       this.writeChar = null;
       this.notify();
@@ -250,21 +332,55 @@ class BluetoothPrinterManager {
 
   // Print Receipt automatically
   public async print(data: ReceiptData): Promise<{ success: boolean; message: string }> {
-    // 1. If already connected, print immediately!
+    const bytes = generateEscPosBytes(data);
+
+    // 1. Android Native App Bridge
+    if (isAndroidNativeApp()) {
+      const bridge = (window as any).AndroidBridge;
+      if (!bridge.isBluetoothEnabled()) {
+        return {
+          success: false,
+          message: "Bluetooth OFF hai. Kripya phone ka Bluetooth ON karein.",
+        };
+      }
+      if (!bridge.hasPermissions()) {
+        bridge.requestPermissions();
+        return {
+          success: false,
+          message: "Bluetooth permission allow karein aur dubara print karein.",
+        };
+      }
+
+      const base64 = uint8ArrayToBase64(bytes);
+      const resRaw = bridge.print(this.deviceAddress || "", base64);
+      try {
+        const res = JSON.parse(resRaw);
+        if (res.success) {
+          this.status = "connected";
+          if (res.deviceName) this.deviceName = res.deviceName;
+          if (res.deviceAddress) this.deviceAddress = res.deviceAddress;
+          if (typeof window !== "undefined" && res.deviceName) {
+            localStorage.setItem("last_printer_name", res.deviceName);
+            if (res.deviceAddress) localStorage.setItem("last_printer_address", res.deviceAddress);
+          }
+          this.notify();
+        }
+        return res;
+      } catch (e: any) {
+        return { success: false, message: "Print response parse error: " + (e.message || "") };
+      }
+    }
+
+    // 2. Web Bluetooth flow
     if (this.isConnected()) {
-      const bytes = generateEscPosBytes(data);
       return await this.sendBytes(bytes);
     }
 
-    // 2. If not connected, try to connect first
     const connRes = await this.connect();
     if (!connRes.success) {
-      // Fallback to system print if user wants
       return connRes;
     }
 
-    // Print with newly connected printer
-    const bytes = generateEscPosBytes(data);
     return await this.sendBytes(bytes);
   }
 }
