@@ -3,7 +3,6 @@ package com.playon.digitjodi;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
@@ -104,9 +103,6 @@ public class MainActivity extends AppCompatActivity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setUserAgentString(settings.getUserAgentString() + " PlayOnApp/1.0.0");
-
-        // Native Bluetooth Bridge for thermal receipt printing
-        webView.addJavascriptInterface(new BluetoothPrinterBridge(this, webView), "AndroidBridge");
 
         webView.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
 
@@ -247,18 +243,5 @@ public class MainActivity extends AppCompatActivity {
     private void hideError() {
         errorLayout.setVisibility(View.GONE);
         swipeRefresh.setVisibility(View.VISIBLE);
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == BluetoothPrinterBridge.PERMISSION_REQUEST_CODE) {
-            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-            if (granted) {
-                Toast.makeText(this, "Bluetooth permission granted! You can now print.", Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(this, "Bluetooth permission is required for thermal receipt printer", Toast.LENGTH_LONG).show();
-            }
-        }
     }
 }

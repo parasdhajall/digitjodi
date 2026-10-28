@@ -80,61 +80,23 @@
   color: transparent;
 }
 
-@page {
-  size: 58mm auto;
-  margin: 0;
-}
-
 @media print {
-  html, body {
-    width: 58mm !important;
-    height: auto !important;
-    min-height: 0 !important;
-    max-height: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    background: #fff !important;
-    overflow: hidden !important;
-  }
-
-  /* Collapse everything in the background */
   body * {
     visibility: hidden;
-    height: 0 !important;
-    min-height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border: none !important;
-    overflow: hidden !important;
   }
-
-  /* Show ONLY thermal receipt */
+  #thermal-receipt, #thermal-receipt * {
+    visibility: visible;
+  }
   #thermal-receipt {
-    visibility: visible !important;
     display: block !important;
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 58mm !important;
-    max-width: 58mm !important;
-    height: auto !important;
-    margin: 0 !important;
-    padding: 3mm 2mm !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 58mm;
+    margin: 0;
+    padding: 2mm;
     color: #000 !important;
     background: #fff !important;
-    font-family: 'Courier New', Courier, monospace !important;
-    box-sizing: border-box !important;
-    overflow: visible !important;
-    page-break-after: avoid !important;
-    break-after: avoid !important;
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
-  }
-
-  #thermal-receipt * {
-    visibility: visible !important;
-    height: auto !important;
-    overflow: visible !important;
-    color: #000 !important;
+    font-family: monospace !important;
   }
 }

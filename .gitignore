@@ -36,7 +36,6 @@ dist-ssr
 
 # Android build artifacts
 *.apk
-!public/PlayOn.apk
 .gradle/
 android/.gradle/
 android/build/

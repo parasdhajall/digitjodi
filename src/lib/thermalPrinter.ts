@@ -1,4 +1,4 @@
-// Thermal Printer Utility for 58mm Bluetooth Printers (Native Android Bridge + ESC/POS + Web Bluetooth)
+// Thermal Printer Utility for 58mm Bluetooth Printers (ESC/POS & System Print)
 import { useState, useEffect } from "react";
 
 export type ReceiptData = {
@@ -26,8 +26,8 @@ export function generateEscPosBytes(data: ReceiptData): Uint8Array {
   const add = (str: string) => parts.push(encoder.encode(str));
   const addBytes = (bytes: number[]) => parts.push(new Uint8Array(bytes));
 
-  // 1. Initialize printer (ESC @)
-  addBytes([0x1b, 0x40]);
+  // 1. Initialize printer
+  addBytes([0x1b, 0x40]); // ESC @
 
   // 2. Center Align Header
   addBytes([0x1b, 0x61, 0x01]); // ESC a 1 (center)
@@ -73,11 +73,10 @@ export function generateEscPosBytes(data: ReceiptData): Uint8Array {
   // Footer Center
   addBytes([0x1b, 0x61, 0x01]); // center
   add("Good Luck! Thank You!\n");
-  add("Keep this slip safe\n\n\n\n\n"); // Extra paper feed lines so text rolls out completely
+  add("Keep this slip safe\n\n\n\n"); // Feed lines
 
   // Cut paper (partial cut)
   addBytes([0x1d, 0x56, 0x41, 0x10]);
-  addBytes([0x0a, 0x0a]); // flush lines
 
   // Combine into single Uint8Array
   const totalLength = parts.reduce((acc, p) => acc + p.length, 0);
@@ -90,32 +89,18 @@ export function generateEscPosBytes(data: ReceiptData): Uint8Array {
   return result;
 }
 
-export function isAndroidNativeApp(): boolean {
-  return typeof window !== "undefined" && typeof (window as any).AndroidBridge !== "undefined";
-}
-
-function uint8ArrayToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-// Common Thermal Printer Bluetooth GATT Service UUIDs
 const COMMON_PRINTER_SERVICES = [
-  "49535343-fe7d-4ae5-8fa9-9fafd205e455", // ISSC transparent UART (most common)
+  "000018f0-0000-1000-8000-00805f9b34fb", // standard ESC/POS
   "e7810a71-73ae-499d-8c15-faa9aef0c3f2", // Everycom / generic POS
-  "000018f0-0000-1000-8000-00805f9b34fb", // Standard ESC/POS
-  "0000ff00-0000-1000-8000-00805f9b34fb", // FF00 generic thermal
-  "0000ffe0-0000-1000-8000-00805f9b34fb", // HM-10 / CC2541 UART (very common in 58mm)
-  "0000fff0-0000-1000-8000-00805f9b34fb", // FFF0 printer UART
+  "49535343-fe7d-4ae5-8fa9-9fafd205e455", // ISSC transparent UART
   "0000ae00-0000-1000-8000-00805f9b34fb",
   "0000ae30-0000-1000-8000-00805f9b34fb",
   "0000af30-0000-1000-8000-00805f9b34fb",
+  "0000ff00-0000-1000-8000-00805f9b34fb",
   "0000fee7-0000-1000-8000-00805f9b34fb",
-  "de5bf728-d711-4e47-af26-65e3012a5dc7", // Zijiang / Mstar
+  "00001800-0000-1000-8000-00805f9b34fb",
+  "00001801-0000-1000-8000-00805f9b34fb",
+  "0000180a-0000-1000-8000-00805f9b34fb",
 ];
 
 // Persistent Bluetooth Printer Manager Singleton
@@ -125,16 +110,11 @@ class BluetoothPrinterManager {
   private writeChar: any = null;
   public status: PrinterStatus = "disconnected";
   public deviceName: string | null = null;
-  public deviceAddress: string | null = null;
   private listeners: Set<() => void> = new Set();
 
   constructor() {
     if (typeof window !== "undefined") {
       this.deviceName = localStorage.getItem("last_printer_name") || null;
-      this.deviceAddress = localStorage.getItem("last_printer_address") || null;
-      if (isAndroidNativeApp() && this.deviceName) {
-        this.status = "connected";
-      }
     }
   }
 
@@ -148,70 +128,11 @@ class BluetoothPrinterManager {
   }
 
   public isConnected(): boolean {
-    if (isAndroidNativeApp()) {
-      return this.status === "connected" && !!this.deviceName;
-    }
     return this.status === "connected" && !!this.writeChar;
   }
 
   // Connect to Bluetooth Printer
   public async connect(): Promise<{ success: boolean; message: string }> {
-    // 1. Native Android App Bridge
-    if (isAndroidNativeApp()) {
-      const bridge = (window as any).AndroidBridge;
-      if (!bridge.isBluetoothEnabled()) {
-        return {
-          success: false,
-          message: "Mobile Bluetooth OFF hai. Kripya Bluetooth ON karein.",
-        };
-      }
-      if (!bridge.hasPermissions()) {
-        bridge.requestPermissions();
-        return {
-          success: false,
-          message: "Bluetooth permission allow karein aur dubara connect karein.",
-        };
-      }
-
-      try {
-        const raw = bridge.getPairedDevices();
-        const devices: { name: string; address: string }[] = JSON.parse(raw || "[]");
-        if (!devices || devices.length === 0) {
-          if (bridge.openBluetoothSettings) {
-            bridge.openBluetoothSettings();
-          }
-          return {
-            success: false,
-            message: "Koi paired Bluetooth printer nahi mila. Phone settings me pehle printer pair karein.",
-          };
-        }
-
-        const target = devices.find((d) =>
-          /print|pos|mtp|inner|rp|mpt|bluetooth/i.test(d.name)
-        ) || devices[0];
-
-        this.deviceName = target.name;
-        this.deviceAddress = target.address;
-        this.status = "connected";
-
-        if (typeof window !== "undefined") {
-          localStorage.setItem("last_printer_name", target.name);
-          localStorage.setItem("last_printer_address", target.address);
-        }
-        this.notify();
-        return {
-          success: true,
-          message: `Connected to ${target.name}!`,
-        };
-      } catch (err: any) {
-        return {
-          success: false,
-          message: err.message || "Failed to load paired devices.",
-        };
-      }
-    }
-
-    // 2. Web Bluetooth API (for Chrome browser)
     const nav = navigator as any;
     if (!nav.bluetooth) {
       return {
@@ -243,72 +164,21 @@ class BluetoothPrinterManager {
       const server = await device.gatt.connect();
       const services = await server.getPrimaryServices();
 
-      // Known printer characteristics to prioritize
-      const KNOWN_WRITE_CHARS = [
-        "49535343-8841-43f4-a8d4-ecbe34729bb3", // ISSC transparent write
-        "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f", // POS write
-        "0000ff02-0000-1000-8000-00805f9b34fb", // FF02 write
-        "0000ffe1-0000-1000-8000-00805f9b34fb", // HM-10 UART write
-        "0000fff1-0000-1000-8000-00805f9b34fb", // FFF1 write
-        "0000fff2-0000-1000-8000-00805f9b34fb", // FFF2 write
-        "00002af1-0000-1000-8000-00805f9b34fb", // ESC/POS write
-      ];
-
       let foundWriteChar: any = null;
 
       for (const service of services) {
-        const sUuid = service.uuid.toLowerCase();
-
-        // STRICTLY IGNORE standard Bluetooth system services to avoid binding to Device Name (0x2A00)
-        if (
-          sUuid.includes("1800-") ||
-          sUuid.includes("1801-") ||
-          sUuid.includes("180a-") ||
-          sUuid.includes("180f-")
-        ) {
-          continue;
-        }
-
         try {
           const chars = await service.getCharacteristics();
           for (const c of chars) {
-            const cUuid = c.uuid.toLowerCase();
-
-            // Ignore standard read-only/metadata characteristics
-            if (
-              cUuid.includes("2a00-") ||
-              cUuid.includes("2a01-") ||
-              cUuid.includes("2a02-") ||
-              cUuid.includes("2a03-") ||
-              cUuid.includes("2a04-") ||
-              cUuid.includes("2a05-") ||
-              cUuid.includes("2a19-") ||
-              cUuid.includes("2a29-")
-            ) {
-              continue;
-            }
-
-            if (c.properties.writeWithoutResponse || c.properties.write) {
-              // If it's a known dedicated printer write characteristic, take it immediately!
-              if (KNOWN_WRITE_CHARS.some((k) => cUuid.includes(k.slice(0, 8)))) {
-                foundWriteChar = c;
-                break;
-              }
-              // Otherwise keep as candidate
-              if (!foundWriteChar) {
-                foundWriteChar = c;
-              }
+            if (c.properties.write || c.properties.writeWithoutResponse) {
+              foundWriteChar = c;
+              break;
             }
           }
         } catch {
           // ignore restricted services
         }
-        if (
-          foundWriteChar &&
-          KNOWN_WRITE_CHARS.some((k) => foundWriteChar.uuid.toLowerCase().includes(k.slice(0, 8)))
-        ) {
-          break;
-        }
+        if (foundWriteChar) break;
       }
 
       if (!foundWriteChar) {
@@ -346,39 +216,28 @@ class BluetoothPrinterManager {
     this.status = "disconnected";
     this.writeChar = null;
     this.server = null;
-    this.deviceName = null;
-    this.deviceAddress = null;
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("last_printer_name");
-      localStorage.removeItem("last_printer_address");
-    }
     this.notify();
   }
 
-  // Send raw ESC/POS bytes to connected printer (Web Bluetooth)
+  // Send raw ESC/POS bytes to connected printer
   public async sendBytes(bytes: Uint8Array): Promise<{ success: boolean; message: string }> {
     if (!this.isConnected()) {
       return { success: false, message: "Printer is not connected." };
     }
 
     try {
-      // Android Chrome BLE requires 20-byte MTU chunks with a small delay between chunks
-      // Without this, Android BLE drops chunks or fails silently
-      const chunkSize = 20;
+      const chunkSize = 100;
       for (let i = 0; i < bytes.length; i += chunkSize) {
         const chunk = bytes.slice(i, i + chunkSize);
-        if (this.writeChar.properties.writeWithoutResponse && this.writeChar.writeValueWithoutResponse) {
+        if (this.writeChar.writeValueWithoutResponse) {
           await this.writeChar.writeValueWithoutResponse(chunk);
-        } else if (this.writeChar.writeValueWithResponse) {
-          await this.writeChar.writeValueWithResponse(chunk);
         } else {
           await this.writeChar.writeValue(chunk);
         }
-        // Essential 20ms pause for Android BLE buffer to flush to printer UART
-        await new Promise((resolve) => setTimeout(resolve, 20));
       }
       return { success: true, message: "Receipt printed successfully!" };
     } catch (err: any) {
+      // Disconnect if error
       this.status = "disconnected";
       this.writeChar = null;
       this.notify();
@@ -391,55 +250,21 @@ class BluetoothPrinterManager {
 
   // Print Receipt automatically
   public async print(data: ReceiptData): Promise<{ success: boolean; message: string }> {
-    const bytes = generateEscPosBytes(data);
-
-    // 1. Android Native App Bridge
-    if (isAndroidNativeApp()) {
-      const bridge = (window as any).AndroidBridge;
-      if (!bridge.isBluetoothEnabled()) {
-        return {
-          success: false,
-          message: "Bluetooth OFF hai. Kripya phone ka Bluetooth ON karein.",
-        };
-      }
-      if (!bridge.hasPermissions()) {
-        bridge.requestPermissions();
-        return {
-          success: false,
-          message: "Bluetooth permission allow karein aur dubara print karein.",
-        };
-      }
-
-      const base64 = uint8ArrayToBase64(bytes);
-      const resRaw = bridge.print(this.deviceAddress || "", base64);
-      try {
-        const res = JSON.parse(resRaw);
-        if (res.success) {
-          this.status = "connected";
-          if (res.deviceName) this.deviceName = res.deviceName;
-          if (res.deviceAddress) this.deviceAddress = res.deviceAddress;
-          if (typeof window !== "undefined" && res.deviceName) {
-            localStorage.setItem("last_printer_name", res.deviceName);
-            if (res.deviceAddress) localStorage.setItem("last_printer_address", res.deviceAddress);
-          }
-          this.notify();
-        }
-        return res;
-      } catch (e: any) {
-        return { success: false, message: "Print response parse error: " + (e.message || "") };
-      }
-    }
-
-    // 2. Web Bluetooth flow
+    // 1. If already connected, print immediately!
     if (this.isConnected()) {
+      const bytes = generateEscPosBytes(data);
       return await this.sendBytes(bytes);
     }
 
+    // 2. If not connected, try to connect first
     const connRes = await this.connect();
     if (!connRes.success) {
+      // Fallback to system print if user wants
       return connRes;
     }
 
+    // Print with newly connected printer
+    const bytes = generateEscPosBytes(data);
     return await this.sendBytes(bytes);
   }
 }
