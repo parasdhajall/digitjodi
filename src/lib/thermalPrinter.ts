@@ -73,7 +73,7 @@ export function generateEscPosBytes(data: ReceiptData): Uint8Array {
   // Footer Center
   addBytes([0x1b, 0x61, 0x01]); // center
   add("Good Luck! Thank You!\n");
-  add("Keep this slip safe\n\n"); // Just 2 lines to cleanly clear the tear blade without wasting paper
+  add("Keep this slip safe\n\n\n\n"); // 4 lines so paper comfortably clears the tear blade
 
   // Standard partial cut (without feeding extra blank paper)
   addBytes([0x1d, 0x56, 0x01]);
