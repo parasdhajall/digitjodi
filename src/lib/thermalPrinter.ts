@@ -73,11 +73,10 @@ export function generateEscPosBytes(data: ReceiptData): Uint8Array {
   // Footer Center
   addBytes([0x1b, 0x61, 0x01]); // center
   add("Good Luck! Thank You!\n");
-  add("Keep this slip safe\n\n\n\n\n"); // Extra paper feed lines so text rolls out completely
+  add("Keep this slip safe\n\n"); // Just 2 lines to cleanly clear the tear blade without wasting paper
 
-  // Cut paper (partial cut)
-  addBytes([0x1d, 0x56, 0x41, 0x10]);
-  addBytes([0x0a, 0x0a]); // flush lines
+  // Standard partial cut (without feeding extra blank paper)
+  addBytes([0x1d, 0x56, 0x01]);
 
   // Combine into single Uint8Array
   const totalLength = parts.reduce((acc, p) => acc + p.length, 0);
