@@ -102,6 +102,93 @@ export function marketStatus(m: { active: boolean; open_time: string; close_time
   return { state: "open" as MarketState, note: "Open for Play" };
 }
 
+/**
+ * Check whether a market is currently open for play/betting (used for players on Home/Play pages).
+ */
+export function isMarketOpen(m: {
+  active: boolean;
+  open_time: string;
+  close_time: string;
+  open_panna?: string | null;
+  close_panna?: string | null;
+}): boolean {
+  if (!m.active) return false;
+  const canOpen = canMarketDeclareOpen(m);
+  const displayClose = canOpen ? m.close_panna : null;
+  if (displayClose) return false;
+  const st = marketStatus(m);
+  return st.state === "open";
+}
+
+/**
+ * Check whether a market is active/open in Admin (pending action, live play, or close declaration).
+ * Markets that have Full Day Declared or are switched off return false.
+ */
+export function isMarketOpenForAdmin(m: {
+  active: boolean;
+  open_time: string;
+  close_time: string;
+  open_panna?: string | null;
+  close_panna?: string | null;
+}): boolean {
+  if (!m.active) return false;
+  const canOpen = canMarketDeclareOpen(m);
+  // If open time arrived today and close_panna is declared, it is Full Day Declared (closed)
+  if (canOpen && m.close_panna) return false;
+  // Overnight market during post-close night window
+  const nowM = toMin(istHHMM());
+  const oM = toMin(m.open_time);
+  const cM = toMin(m.close_time);
+  if (cM < oM && nowM >= cM && nowM < 360) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Sort markets for players: Open markets at the top, Closed markets at the bottom.
+ * Preserves relative sort_order within each group.
+ */
+export function sortMarketsForPlayer<T extends {
+  active: boolean;
+  open_time: string;
+  close_time: string;
+  open_panna?: string | null;
+  close_panna?: string | null;
+  sort_order?: number | null;
+}>(markets: T[]): T[] {
+  return [...markets].sort((a, b) => {
+    const aOpen = isMarketOpen(a);
+    const bOpen = isMarketOpen(b);
+    if (aOpen !== bOpen) {
+      return aOpen ? -1 : 1;
+    }
+    return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+  });
+}
+
+/**
+ * Sort markets for admin: Running/pending markets at the top, Full Day Declared/Inactive at the bottom.
+ * Preserves relative sort_order within each group.
+ */
+export function sortMarketsForAdmin<T extends {
+  active: boolean;
+  open_time: string;
+  close_time: string;
+  open_panna?: string | null;
+  close_panna?: string | null;
+  sort_order?: number | null;
+}>(markets: T[]): T[] {
+  return [...markets].sort((a, b) => {
+    const aOpen = isMarketOpenForAdmin(a);
+    const bOpen = isMarketOpenForAdmin(b);
+    if (aOpen !== bOpen) {
+      return aOpen ? -1 : 1;
+    }
+    return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+  });
+}
+
 // Check whether market's open session time has actually arrived today in IST
 export function canMarketDeclareOpen(m: { open_time: string; close_time: string }) {
   const nowM = toMin(istHHMM());

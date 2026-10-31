@@ -35,7 +35,7 @@ import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, useProfile } from "@/hooks/useAuth";
 import { marketsQuery } from "./index";
-import { resultLabel, fmtTime, marketStatus, fmtIST, gameLabel, canMarketDeclareOpen, canMarketDeclareClose } from "@/lib/matka";
+import { resultLabel, fmtTime, marketStatus, fmtIST, gameLabel, canMarketDeclareOpen, canMarketDeclareClose, isMarketOpenForAdmin, sortMarketsForAdmin } from "@/lib/matka";
 import { AdminPlays } from "@/components/AdminPlays";
 import { fetchRsbossLiveResults, type MarketLiveResult } from "@/lib/rsbossFetcher";
 
@@ -67,6 +67,9 @@ function Admin() {
   const { user } = useAuth();
   const { data: profile, isLoading } = useProfile(user?.id);
   const { data: markets } = useQuery(marketsQuery);
+  const sortedMarkets = useMemo(() => {
+    return markets ? sortMarketsForAdmin(markets) : [];
+  }, [markets]);
   const qc = useQueryClient();
 
   const [activeTab, setActiveTab] = useState<"markets" | "plays" | "players" | "pnl">("markets");
@@ -759,7 +762,7 @@ function Admin() {
 
           {/* Markets List */}
           <div className="space-y-4">
-            {markets?.map((m) => {
+            {sortedMarkets.map((m, index) => {
               const session: "open" | "close" = m.open_panna ? "close" : "open";
               const st = marketStatus(m);
               const done = !!m.close_panna;
@@ -777,8 +780,22 @@ function Admin() {
                   ? live?.openPanna
                   : live?.closePanna;
 
+              const isMarketClosed = !isMarketOpenForAdmin(m);
+              const isFirstClosed = isMarketClosed && index > 0 && isMarketOpenForAdmin(sortedMarkets[index - 1]);
+
               return (
-                <div key={m.id} className="rounded-xl border bg-card p-5 space-y-3.5 transition-all hover:border-primary/40">
+                <div key={m.id} className="space-y-4">
+                  {isFirstClosed && (
+                    <div className="pt-4 pb-2 flex items-center gap-3">
+                      <div className="h-px flex-1 bg-border/60" />
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/80 flex items-center gap-1.5">
+                        <CheckCircle className="h-3.5 w-3.5 text-success" /> Full Day Declared / Closed Markets
+                      </span>
+                      <div className="h-px flex-1 bg-border/60" />
+                    </div>
+                  )}
+
+                  <div className="rounded-xl border bg-card p-5 space-y-3.5 transition-all hover:border-primary/40">
                   <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
                     <div className="flex flex-wrap items-center gap-3">
                       <h2 className="font-display text-2xl tracking-wide">{m.name}</h2>
@@ -977,8 +994,9 @@ function Admin() {
                     </Button>
                   </div>
                 </div>
-              );
-            })}
+              </div>
+            );
+          })}
           </div>
         </section>
       )}
@@ -1151,7 +1169,7 @@ function Admin() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {markets?.map((m) => {
+                  {sortedMarkets.map((m) => {
                     const stats = marketPnLMap[m.id] || { collection: 0, payout: 0, net: 0, betsCount: 0, wonCount: 0 };
                     const margin = stats.collection > 0 ? (stats.net / stats.collection) * 100 : 0;
                     const isProfit = stats.net >= 0;
@@ -1255,7 +1273,7 @@ function Admin() {
       )}
 
       {/* TAB 3: LIVE PLAYER PLAYS */}
-      {activeTab === "plays" && <AdminPlays markets={markets ?? []} />}
+      {activeTab === "plays" && <AdminPlays markets={sortedMarkets} />}
 
       {/* TAB 4: USERS, SECURITY, PASSWORDS & BLOCKING */}
       {activeTab === "players" && (

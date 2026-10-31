@@ -1,9 +1,10 @@
+import { useMemo } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Clock, Play, Zap, Smartphone, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { fmtTime, resultLabel, marketStatus, canMarketDeclareOpen } from "@/lib/matka";
+import { fmtTime, resultLabel, marketStatus, canMarketDeclareOpen, isMarketOpen } from "@/lib/matka";
 import { useAuth, useTodayExpense } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/")({
@@ -35,10 +36,85 @@ function Index() {
   const { user } = useAuth();
   const { data: todayExp } = useTodayExpense(user?.id);
 
+  const openMarkets = useMemo(
+    () => (markets ? markets.filter((m) => isMarketOpen(m)).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)) : []),
+    [markets]
+  );
+  const closedMarkets = useMemo(
+    () => (markets ? markets.filter((m) => !isMarketOpen(m)).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)) : []),
+    [markets]
+  );
+
   const isApp = typeof navigator !== "undefined" && (
     navigator.userAgent.includes("PlayOnApp") ||
     (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
   );
+
+  const renderMarketCard = (m: any) => {
+    const canOpen = canMarketDeclareOpen(m);
+    // If market's open session for today hasn't arrived yet, any open/close panna is from yesterday
+    const displayOpen = canOpen ? m.open_panna : null;
+    const displayClose = canOpen ? m.close_panna : null;
+
+    const st = marketStatus(m);
+    const done = !canOpen ? false : !!displayClose;
+    const isOpen = st.state === "open" && !done;
+    const badge = isOpen
+      ? "bg-success/20 text-success border-success/30"
+      : st.state === "upcoming"
+        ? "bg-accent/20 text-accent border-accent/30"
+        : "bg-destructive/20 text-destructive border-destructive/30";
+
+    return (
+      <article
+        key={m.id}
+        className="relative flex flex-col justify-between overflow-hidden rounded-xl border bg-card p-5 transition-shadow hover:shadow-md"
+      >
+        {/* Header: Market Name and Live Status */}
+        <div>
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="font-display text-2xl tracking-wide text-foreground">{m.name}</h3>
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${badge}`}>
+              {isOpen && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-success" />}
+              {done ? "Results Declared" : st.note}
+            </span>
+          </div>
+
+          {/* Main Digits Display */}
+          <div className="my-4 rounded-lg bg-background/60 py-3 text-center">
+            <p className="font-display text-4xl tracking-widest text-primary md:text-5xl">
+              {resultLabel(displayOpen, displayClose)}
+            </p>
+          </div>
+        </div>
+
+        {/* Bottom: Timing & Direct Play Button */}
+        <div className="mt-2 space-y-3">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Clock className="h-3.5 w-3.5" /> Open: <strong className="text-foreground">{fmtTime(m.open_time)}</strong>
+            </span>
+            <span>
+              Close: <strong className="text-foreground">{fmtTime(m.close_time)}</strong>
+            </span>
+          </div>
+
+          {/* Direct Play Button - NO Chart button */}
+          <Button
+            asChild
+            className="w-full font-semibold shadow-sm"
+            disabled={!isOpen}
+            variant={isOpen ? "default" : "secondary"}
+          >
+            <Link to="/play/$marketId" params={{ marketId: m.id }} className="flex items-center justify-center gap-2">
+              <Play className="h-4 w-4 fill-current" />
+              {isOpen ? "Play Now" : done ? "Closed" : "Upcoming"}
+            </Link>
+          </Button>
+        </div>
+      </article>
+    );
+  };
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
@@ -104,71 +180,19 @@ function Index() {
       {isLoading && <p className="text-muted-foreground">Loading markets…</p>}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {markets?.map((m) => {
-          const canOpen = canMarketDeclareOpen(m);
-          // If market's open session for today hasn't arrived yet, any open/close panna is from yesterday
-          const displayOpen = canOpen ? m.open_panna : null;
-          const displayClose = canOpen ? m.close_panna : null;
+        {openMarkets.map(renderMarketCard)}
 
-          const st = marketStatus(m);
-          const done = !canOpen ? false : !!displayClose;
-          const isOpen = st.state === "open" && !done;
-          const badge = isOpen
-            ? "bg-success/20 text-success border-success/30"
-            : st.state === "upcoming"
-              ? "bg-accent/20 text-accent border-accent/30"
-              : "bg-destructive/20 text-destructive border-destructive/30";
+        {closedMarkets.length > 0 && openMarkets.length > 0 && (
+          <div className="col-span-full my-2 flex items-center gap-3">
+            <div className="h-px flex-1 bg-border/60" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/75">
+              Closed Markets
+            </span>
+            <div className="h-px flex-1 bg-border/60" />
+          </div>
+        )}
 
-          return (
-            <article
-              key={m.id}
-              className="relative flex flex-col justify-between overflow-hidden rounded-xl border bg-card p-5 transition-shadow hover:shadow-md"
-            >
-              {/* Header: Market Name and Live Status */}
-              <div>
-                <div className="flex items-start justify-between gap-2">
-                  <h3 className="font-display text-2xl tracking-wide text-foreground">{m.name}</h3>
-                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${badge}`}>
-                    {isOpen && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-success" />}
-                    {done ? "Results Declared" : st.note}
-                  </span>
-                </div>
-
-                {/* Main Digits Display */}
-                <div className="my-4 rounded-lg bg-background/60 py-3 text-center">
-                  <p className="font-display text-4xl tracking-widest text-primary md:text-5xl">
-                    {resultLabel(displayOpen, displayClose)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Bottom: Timing & Direct Play Button */}
-              <div className="mt-2 space-y-3">
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <Clock className="h-3.5 w-3.5" /> Open: <strong className="text-foreground">{fmtTime(m.open_time)}</strong>
-                  </span>
-                  <span>
-                    Close: <strong className="text-foreground">{fmtTime(m.close_time)}</strong>
-                  </span>
-                </div>
-
-                {/* Direct Play Button - NO Chart button */}
-                <Button
-                  asChild
-                  className="w-full font-semibold shadow-sm"
-                  disabled={!isOpen}
-                  variant={isOpen ? "default" : "secondary"}
-                >
-                  <Link to="/play/$marketId" params={{ marketId: m.id }} className="flex items-center justify-center gap-2">
-                    <Play className="h-4 w-4 fill-current" />
-                    {isOpen ? "Play Now" : done ? "Closed" : "Upcoming"}
-                  </Link>
-                </Button>
-              </div>
-            </article>
-          );
-        })}
+        {closedMarkets.map(renderMarketCard)}
       </div>
     </main>
   );
