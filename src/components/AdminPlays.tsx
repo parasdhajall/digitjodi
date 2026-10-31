@@ -144,7 +144,7 @@ export function AdminPlays({ markets }: { markets: Market[] }) {
   const highVolumeJodi = useMemo(() => {
     const map = new Map<string, { number: string; session: string; points: number; count: number; liability: number }>();
     for (const b of marketHvBets) {
-      if (b.game_type === "jodi" || b.game_type === "jodi_bulk") {
+      if (b.game_type === "jodi" || b.game_type === "jodi_bulk" || b.game_type === "family_jodi") {
         const k = b.number;
         const cur = map.get(k) ?? { number: b.number, session: "close", points: 0, count: 0, liability: 0 };
         cur.points += b.points;

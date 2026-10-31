@@ -39,6 +39,11 @@ import {
   getPannaTypeInfo,
   type PanelFamily,
 } from "@/lib/pannaChartData";
+import {
+  JODI_FAMILIES_15,
+  findFamilyByJodi,
+  type JodiFamily,
+} from "@/lib/jodiFamilyData";
 
 export const Route = createFileRoute("/play/$marketId")({
   head: () => ({
@@ -104,6 +109,13 @@ function PlayPage() {
   const [isFamilyChartOpen, setIsFamilyChartOpen] = useState(false);
   const [familyChartSearch, setFamilyChartSearch] = useState("");
 
+  // Jodi Family state
+  const [jodiFamilyInput, setJodiFamilyInput] = useState("");
+  const [activeJodiFamily, setActiveJodiFamily] = useState<JodiFamily | null>(null);
+  const [selectedFamilyJodis, setSelectedFamilyJodis] = useState<string[]>([]);
+  const [isJodiFamilyChartOpen, setIsJodiFamilyChartOpen] = useState(false);
+  const [jodiFamilyChartSearch, setJodiFamilyChartSearch] = useState("");
+
   const { data: m } = useQuery({
     queryKey: ["market", marketId],
     queryFn: async () => (await supabase.from("markets").select("*").eq("id", marketId).single()).data,
@@ -141,6 +153,9 @@ function PlayPage() {
     setFamilyInput("");
     setActiveFamily(null);
     setSelectedFamilyPannas([]);
+    setJodiFamilyInput("");
+    setActiveJodiFamily(null);
+    setSelectedFamilyJodis([]);
   };
 
   const selectNumber = (num: string) => {
@@ -488,6 +503,82 @@ function PlayPage() {
     return ok;
   };
 
+  // Jodi Family helpers & bucket action
+  const handleJodiFamilyInputChange = (val: string) => {
+    const cleaned = val.replace(/\D/g, "").slice(0, 2);
+    setJodiFamilyInput(cleaned);
+    if (cleaned.length === 2) {
+      const fam = findFamilyByJodi(cleaned);
+      if (fam) {
+        setActiveJodiFamily(fam);
+        setSelectedFamilyJodis(fam.jodis);
+      } else {
+        setActiveJodiFamily(null);
+        setSelectedFamilyJodis([]);
+      }
+    } else if (cleaned.length === 0) {
+      setActiveJodiFamily(null);
+      setSelectedFamilyJodis([]);
+    }
+  };
+
+  const selectJodiFamily = (fam: JodiFamily) => {
+    setActiveJodiFamily(fam);
+    setJodiFamilyInput(fam.family);
+    setSelectedFamilyJodis(fam.jodis);
+  };
+
+  const toggleFamilyJodi = (j: string) => {
+    setSelectedFamilyJodis((prev) =>
+      prev.includes(j) ? prev.filter((x) => x !== j) : [...prev, j]
+    );
+  };
+
+  const selectAllFamilyJodis = () => {
+    if (activeJodiFamily) {
+      setSelectedFamilyJodis(activeJodiFamily.jodis);
+    }
+  };
+
+  const deselectAllFamilyJodis = () => {
+    setSelectedFamilyJodis([]);
+  };
+
+  const totalJodiFamilyPoints = selectedFamilyJodis.length * points;
+
+  const handleAddJodiFamilyToBucket = (): boolean => {
+    if (marketClosed) {
+      toast.error(`Market has closed for today (${m?.name} closed at ${fmtTime(m?.close_time || "")})`);
+      return false;
+    }
+    if (openClosed) {
+      toast.error(`Jodi games are closed because Open timing (${fmtTime(m?.open_time || "")}) has passed.`);
+      return false;
+    }
+    if (!activeJodiFamily || selectedFamilyJodis.length === 0) {
+      toast.error("Please enter a 2-digit Jodi or select a Family");
+      return false;
+    }
+    if (points < 5) {
+      toast.error("Minimum bet per Jodi is ₹5");
+      return false;
+    }
+
+    const bets = selectedFamilyJodis.map((j) => ({
+      game: "jodi" as GameType,
+      gameLabel: `Family Jodi (${activeJodiFamily.family})`,
+      session: "close" as const,
+      number: j,
+      points: points,
+    }));
+
+    const ok = addToBucket(bets);
+    if (ok) {
+      toast.success(`Added ${bets.length} Family Jodis (${activeJodiFamily.family} Family) to Bucket (₹${bets.length * points})`);
+    }
+    return ok;
+  };
+
   // Confirm and Place All Bucket Bets
   const handleConfirmBucket = async () => {
     if (!user) {
@@ -508,7 +599,7 @@ function PlayPage() {
 
     const betsPayload = bucket.map((item) => ({
       game:
-        item.game === "jodi_bulk"
+        item.game === "jodi_bulk" || (item.game as string) === "family_jodi"
           ? "jodi"
           : item.game === "ank_bulk"
             ? "single"
@@ -631,6 +722,18 @@ function PlayPage() {
         setIsBucketOpen(true);
       } else {
         toast.error("Please enter at least ₹5 for one digit");
+      }
+      return;
+    }
+
+    if (game === "family_jodi") {
+      if (activeJodiFamily && selectedFamilyJodis.length > 0) {
+        const ok = handleAddJodiFamilyToBucket();
+        if (ok) setIsBucketOpen(true);
+      } else if (bucket.length > 0) {
+        setIsBucketOpen(true);
+      } else {
+        toast.error("Please enter a 2-digit Jodi or select a Family first");
       }
       return;
     }
@@ -762,6 +865,8 @@ function PlayPage() {
               ? `ANK ${effSession.toUpperCase()} BULK`
               : game === "jodi_bulk"
                 ? "JODI BULK"
+                : game === "family_jodi"
+                  ? "JODI FAMILY"
                 : game === "family_panna"
                   ? `FAMILY PANNA (${effSession.toUpperCase()})`
                   : GAMES[game].label}
@@ -819,7 +924,7 @@ function PlayPage() {
         )}
 
         {/* Section Header: "Select Panna" + Multiplier Badge (only for standard single games) */}
-        {game !== "jodi_bulk" && game !== "ank_bulk" && game !== "family_panna" && (
+        {game !== "jodi_bulk" && game !== "ank_bulk" && game !== "family_panna" && game !== "family_jodi" && (
           <div className="flex items-center justify-between border-b pb-2.5">
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-foreground">
@@ -1342,6 +1447,197 @@ function PlayPage() {
           </div>
         )}
 
+        {/* 7B. JODI FAMILY / FAMILY JODI (15 Families) */}
+        {game === "family_jodi" && (
+          <div className="space-y-4">
+            {/* Search or Enter Jodi Card */}
+            <div className="rounded-xl border border-primary/30 bg-primary/5 p-3.5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-primary uppercase tracking-wide">
+                  <Sparkles className="h-4 w-4 text-gold" />
+                  <span>Enter Jodi or Pick Family</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsJodiFamilyChartOpen(true)}
+                  className="flex items-center gap-1 text-xs font-bold text-gold hover:underline"
+                >
+                  <Table className="h-3.5 w-3.5" /> 15 Families Chart
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={2}
+                    placeholder="Enter 2-Digit Jodi (e.g. 12 or 76)"
+                    value={jodiFamilyInput}
+                    onChange={(e) => handleJodiFamilyInputChange(e.target.value)}
+                    className="font-mono text-center text-lg font-bold tracking-widest h-11 bg-background"
+                  />
+                  {jodiFamilyInput && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setJodiFamilyInput("");
+                        setActiveJodiFamily(null);
+                        setSelectedFamilyJodis([]);
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                {activeJodiFamily && (
+                  <div className="rounded-xl border border-gold/40 bg-gold/15 px-3 py-2 text-center shrink-0">
+                    <span className="block text-[10px] uppercase font-bold text-muted-foreground">Family</span>
+                    <strong className="font-mono text-base font-black text-gold">{activeJodiFamily.family}</strong>
+                  </div>
+                )}
+              </div>
+
+              {/* Quick 15 Families Chips Scroll */}
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground font-semibold px-0.5">
+                  <span>Quick Pick from 15 Families:</span>
+                  <span className="text-[10px] text-muted-foreground">Tap to select</span>
+                </div>
+                <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-1">
+                  {JODI_FAMILIES_15.map((fam) => {
+                    const isFamActive = activeJodiFamily?.family === fam.family;
+                    return (
+                      <button
+                        key={fam.family}
+                        type="button"
+                        onClick={() => selectJodiFamily(fam)}
+                        className={`rounded-lg px-2.5 py-1.5 font-mono text-xs font-bold shrink-0 transition-all ${
+                          isFamActive
+                            ? "bg-primary text-primary-foreground ring-2 ring-primary shadow-md scale-105"
+                            : "border bg-card text-foreground hover:border-primary hover:bg-secondary"
+                        }`}
+                      >
+                        {fam.family}
+                        <span className="ml-1 text-[10px] opacity-75">({fam.count})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Active Jodi Family Members View */}
+            {activeJodiFamily ? (
+              <div className="rounded-xl border border-border/80 bg-background/50 p-3 space-y-3">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-display text-lg font-bold text-foreground">
+                      Family <strong className="font-mono text-gold">{activeJodiFamily.family}</strong>
+                    </span>
+                    <span className="rounded-md border bg-secondary px-2 py-0.5 text-xs font-bold text-gold">
+                      {selectedFamilyJodis.length} / {activeJodiFamily.count} Selected
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={selectAllFamilyJodis}
+                      className="font-semibold text-primary hover:underline"
+                    >
+                      Select All
+                    </button>
+                    <span className="text-muted-foreground">•</span>
+                    <button
+                      type="button"
+                      onClick={deselectAllFamilyJodis}
+                      className="font-semibold text-muted-foreground hover:text-foreground"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                {/* Grid of Jodis in this Family */}
+                <div className="grid grid-cols-4 gap-2 sm:grid-cols-4">
+                  {activeJodiFamily.jodis.map((j) => {
+                    const isSelected = selectedFamilyJodis.includes(j);
+                    return (
+                      <button
+                        key={j}
+                        type="button"
+                        onClick={() => toggleFamilyJodi(j)}
+                        className={`flex items-center justify-between rounded-xl p-2.5 transition-all text-left border ${
+                          isSelected
+                            ? "border-primary bg-primary/10 shadow-sm ring-1 ring-primary"
+                            : "border-border/60 bg-card/60 opacity-60 hover:opacity-100"
+                        }`}
+                      >
+                        <div>
+                          <span className="font-mono text-base font-bold tracking-wider block text-foreground">
+                            {j}
+                          </span>
+                          <span className="text-[10px] font-semibold text-muted-foreground">
+                            Jodi · 90×
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-bold text-gold">₹{points}</span>
+                          <div
+                            className={`flex h-5 w-5 items-center justify-center rounded-md border text-[11px] font-bold ${
+                              isSelected
+                                ? "bg-primary border-primary text-primary-foreground"
+                                : "border-muted-foreground/40 bg-secondary"
+                            }`}
+                          >
+                            {isSelected ? <Check className="h-3 w-3 stroke-[3]" /> : null}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Summary calculation */}
+                <div className="flex items-center justify-between text-xs pt-1 px-1 text-muted-foreground">
+                  <span>
+                    {selectedFamilyJodis.length} Jodis × ₹{points} each
+                  </span>
+                  <span className="font-bold text-foreground">
+                    Family Total: <strong className="text-gold font-mono text-sm">₹{totalJodiFamilyPoints}</strong>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              /* Helpful Guide Banner when no family chosen yet */
+              <div className="rounded-xl border border-dashed border-border p-5 text-center space-y-2 bg-secondary/30">
+                <div className="flex justify-center">
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                    <Layers className="h-5 w-5" />
+                  </div>
+                </div>
+                <h3 className="font-bold text-sm text-foreground">How Jodi Family (जोड़ी फैमिली) Works</h3>
+                <p className="text-xs text-muted-foreground max-w-sm mx-auto leading-relaxed">
+                  Enter any 2-digit Jodi (e.g. <strong>12</strong> or <strong>76</strong>) or pick a family above. The system automatically loads all direct, reverse, and cut variations (e.g. 12, 17, 21, 26, 62, 67, 71, 76) for 1-click play!
+                </p>
+                <div className="pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => selectJodiFamily(JODI_FAMILIES_15[6]) /* 12 */}
+                    className="text-xs font-semibold"
+                  >
+                    Try Example Family: 12 (8 Jodis)
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* 8. SANGAM (Half / Full) */}
         {(game === "half_sangam" || game === "full_sangam") && (
           <div className="space-y-4 p-3 rounded-xl bg-background/50 border">
@@ -1455,6 +1751,98 @@ function PlayPage() {
                     className="flex-1 h-11 text-xs font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
                   >
                     Confirm & Review ({selectedJodis.length} Jodis)
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : game === "family_jodi" ? (
+            /* B.1B JODI FAMILY BOTTOM BAR */
+            <div className="space-y-2">
+              {/* Points Input & Quick Presets */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground font-medium">Per Jodi:</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-sm font-bold text-gold">₹</span>
+                    <Input
+                      type="number"
+                      min={5}
+                      step={5}
+                      value={points}
+                      onChange={(e) => setPoints(Math.max(5, Number(e.target.value) || 5))}
+                      className="w-20 text-center font-bold text-sm h-8"
+                    />
+                  </div>
+                </div>
+
+                {/* Quick amount chips */}
+                <div className="flex gap-1 overflow-x-auto">
+                  {POINT_PRESETS.map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setPoints(amt)}
+                      className={`rounded-md px-2.5 py-1 text-xs font-semibold border transition-colors ${
+                        points === amt
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-card hover:bg-secondary text-foreground"
+                      }`}
+                    >
+                      ₹{amt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {activeJodiFamily && selectedFamilyJodis.length > 0 && (
+                <div className="flex items-center justify-between text-xs px-1">
+                  <span className="text-muted-foreground">
+                    Playing: <strong className="text-foreground">{selectedFamilyJodis.length} Jodis</strong> ({activeJodiFamily.family} Family)
+                  </span>
+                  <span className="font-semibold text-gold">
+                    Total: <strong>₹{totalJodiFamilyPoints}</strong> (Win Pays 90×)
+                  </span>
+                </div>
+              )}
+
+              {marketClosed ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Market Closed for Today
+                </Button>
+              ) : openClosed ? (
+                <Button disabled className="w-full h-11 text-sm font-semibold rounded-xl bg-muted text-muted-foreground">
+                  Jodi Closed (Open Timing Passed)
+                </Button>
+              ) : !activeJodiFamily || selectedFamilyJodis.length === 0 ? (
+                <div className="flex gap-2">
+                  <Button disabled className="flex-1 h-11 text-xs font-semibold rounded-xl bg-muted text-muted-foreground">
+                    Enter jodi or select a family
+                  </Button>
+                  {bucket.length > 0 && (
+                    <Button
+                      type="button"
+                      onClick={() => setIsBucketOpen(true)}
+                      className="h-11 px-4 text-xs font-bold rounded-xl bg-gold text-slate-950 hover:bg-gold/90 shadow-sm"
+                    >
+                      <ShoppingBag className="h-4 w-4 mr-1.5" /> Bucket ({bucket.length})
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    onClick={handleAddJodiFamilyToBucket}
+                    className="flex-1 h-11 text-xs font-bold rounded-xl border border-gold/40 bg-gold/10 hover:bg-gold/20 text-gold"
+                  >
+                    <Plus className="h-4 w-4 mr-1" /> Add Family ({selectedFamilyJodis.length}) to Bucket
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleDirectPlay}
+                    className="flex-1 h-11 text-xs font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
+                  >
+                    <Play className="h-4 w-4 mr-1 fill-current" /> Play Now (₹{totalJodiFamilyPoints})
                   </Button>
                 </div>
               )}
@@ -1851,6 +2239,94 @@ function PlayPage() {
         onOpenChange={setIsReceiptOpen}
         receiptData={receiptData}
       />
+
+      {/* 15 JODI FAMILIES BROWSER MODAL */}
+      <Dialog open={isJodiFamilyChartOpen} onOpenChange={setIsJodiFamilyChartOpen}>
+        <DialogContent className="max-w-md max-h-[85vh] flex flex-col p-4 bg-card">
+          <DialogHeader className="pb-2 border-b">
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-foreground">
+              <Table className="h-5 w-5 text-gold" />
+              <span>15 Jodi Families Chart (जोड़ी फैमिली)</span>
+            </DialogTitle>
+            <p className="text-xs text-muted-foreground">
+              All 100 jodis grouped into 15 families. Tap any family to load all its jodis instantly.
+            </p>
+          </DialogHeader>
+
+          <div className="py-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search any Jodi or Family (e.g. 12, 76, 05)..."
+                value={jodiFamilyChartSearch}
+                onChange={(e) => setJodiFamilyChartSearch(e.target.value)}
+                className="pl-9 text-xs h-9"
+              />
+              {jodiFamilyChartSearch && (
+                <button
+                  type="button"
+                  onClick={() => setJodiFamilyChartSearch("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto space-y-2 pr-1 divide-y divide-border/60">
+            {JODI_FAMILIES_15.filter((fam) => {
+              if (!jodiFamilyChartSearch) return true;
+              const q = jodiFamilyChartSearch.trim();
+              return (
+                fam.family.includes(q) ||
+                fam.jodis.some((j) => j.includes(q))
+              );
+            }).map((fam) => (
+              <div
+                key={fam.family}
+                className="pt-2 first:pt-0 flex items-center justify-between gap-3 hover:bg-secondary/60 p-2 rounded-lg transition-colors cursor-pointer"
+                onClick={() => {
+                  selectJodiFamily(fam);
+                  setIsJodiFamilyChartOpen(false);
+                }}
+              >
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-black text-gold">Family {fam.family}</span>
+                    <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+                      {fam.count} Jodis
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {fam.jodis.map((j) => (
+                      <span
+                        key={j}
+                        className={`font-mono text-xs px-2 py-0.5 rounded border ${
+                          jodiFamilyChartSearch && j.includes(jodiFamilyChartSearch)
+                            ? "bg-gold text-slate-950 font-bold border-gold"
+                            : "bg-background border-border/70 text-foreground"
+                        }`}
+                      >
+                        {j}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  className="shrink-0 h-8 text-xs font-bold bg-primary text-primary-foreground"
+                >
+                  Select
+                </Button>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* 35 PANEL FAMILIES BROWSER MODAL (Reference: matkaguessing.in/panel-family-chart) */}
       <Dialog open={isFamilyChartOpen} onOpenChange={setIsFamilyChartOpen}>
