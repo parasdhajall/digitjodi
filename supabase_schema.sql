@@ -126,22 +126,30 @@ begin
   now_t := (now() at time zone 'Asia/Kolkata')::time;
   is_cross := (m.close_time <= m.open_time);
 
-  -- Has Close passed?
-  if not is_cross then
-    close_passed := (now_t >= m.close_time);
-  else
-    close_passed := (now_t >= m.close_time and now_t < m.open_time);
-  end if;
-
-  if m.close_panna is not null or close_passed then
-    raise exception 'Market has closed for today (% closed at %)', m.name, to_char(m.close_time, 'HH12:MI AM');
-  end if;
-
   -- Has Open passed?
   if not is_cross then
     open_passed := (now_t >= m.open_time);
   else
     open_passed := (now_t >= m.open_time or now_t < m.close_time);
+  end if;
+
+  -- Self-healing check: if open session hasn't arrived today, any result is leftover from previous day
+  if not open_passed and (m.open_panna is not null or m.close_panna is not null) then
+    update public.markets set open_panna = null, close_panna = null where id = _market;
+    m.open_panna := null;
+    m.close_panna := null;
+  end if;
+
+  -- Has Close passed?
+  if not is_cross then
+    close_passed := (now_t >= m.close_time);
+  else
+    -- Overnight market: closed between 00:05 and 06:00 AM
+    close_passed := (now_t >= m.close_time and now_t < '06:00:00'::time);
+  end if;
+
+  if m.close_panna is not null or close_passed then
+    raise exception 'Market has closed for today (% closed at %)', m.name, to_char(m.close_time, 'HH12:MI AM');
   end if;
 
   if _game not in ('single','jodi','single_panna','double_panna','triple_panna','half_sangam','full_sangam') then
@@ -239,11 +247,84 @@ create or replace function public.reset_market(_market uuid)
 returns void language plpgsql security definer set search_path = public as $$
 begin
   if not public.has_role(auth.uid(),'admin') then raise exception 'Forbidden'; end if;
+  -- Refund only previous days' pending bets, preserve today's pending bets
   update public.profiles p set points = p.points + s.total
-    from (select user_id, sum(points) total from public.bets where market_id=_market and status='pending' group by user_id) s
+    from (
+      select user_id, sum(points) total
+      from public.bets
+      where market_id=_market
+        and status='pending'
+        and created_at < (date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata')
+      group by user_id
+    ) s
     where p.id = s.user_id;
-  update public.bets set status='refunded' where market_id=_market and status='pending';
+
+  update public.bets
+  set status='refunded'
+  where market_id=_market
+    and status='pending'
+    and created_at < (date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata');
+
   update public.markets set open_panna=null, close_panna=null where id=_market;
+end $$;
+
+-- 11B. 6:00 AM AUTO RESET STALE MARKETS STORED FUNCTION
+create or replace function public.auto_reset_stale_markets()
+returns integer language plpgsql security definer set search_path = public as $$
+declare
+  m record;
+  reset_count integer := 0;
+  now_ist time;
+  is_stale boolean;
+begin
+  now_ist := (now() at time zone 'Asia/Kolkata')::time;
+
+  for m in select id, name, open_time, close_time, open_panna, close_panna from public.markets
+  loop
+    if m.open_panna is not null or m.close_panna is not null then
+      is_stale := false;
+      if m.close_time > m.open_time then
+        -- Normal daytime market: if now < open_time, today has not opened yet
+        if now_ist < m.open_time then
+          is_stale := true;
+        end if;
+      else
+        -- Overnight market (e.g. Main Bazar 21:40 to 00:05):
+        -- In session between 21:40 and 00:05. Stale between 00:05 and 21:40 (e.g. 06:00 AM)
+        if now_ist >= m.close_time and now_ist < m.open_time then
+          is_stale := true;
+        end if;
+      end if;
+
+      if is_stale then
+        -- Refund pending bets from previous days (if any were abandoned)
+        update public.profiles p set points = p.points + s.total
+          from (
+            select user_id, sum(points) total
+            from public.bets
+            where market_id = m.id
+              and status = 'pending'
+              and created_at < (date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata')
+            group by user_id
+          ) s
+          where p.id = s.user_id;
+
+        update public.bets
+        set status = 'refunded'
+        where market_id = m.id
+          and status = 'pending'
+          and created_at < (date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata');
+
+        update public.markets
+        set open_panna = null, close_panna = null
+        where id = m.id;
+
+        reset_count := reset_count + 1;
+      end if;
+    end if;
+  end loop;
+
+  return reset_count;
 end $$;
 
 -- 13. PLACE BUCKET BETS STORED FUNCTION (Atomic Batch Betting)
@@ -274,20 +355,30 @@ begin
   now_t := (now() at time zone 'Asia/Kolkata')::time;
   is_cross := (m.close_time <= m.open_time);
 
-  if not is_cross then
-    close_passed := (now_t >= m.close_time);
-  else
-    close_passed := (now_t >= m.close_time and now_t < m.open_time);
-  end if;
-
-  if m.close_panna is not null or close_passed then
-    raise exception 'Market has closed for today (% closed at %)', m.name, to_char(m.close_time, 'HH12:MI AM');
-  end if;
-
+  -- Has Open passed?
   if not is_cross then
     open_passed := (now_t >= m.open_time);
   else
     open_passed := (now_t >= m.open_time or now_t < m.close_time);
+  end if;
+
+  -- Self-healing check: if open session hasn't arrived today, any result is leftover from previous day
+  if not open_passed and (m.open_panna is not null or m.close_panna is not null) then
+    update public.markets set open_panna = null, close_panna = null where id = _market;
+    m.open_panna := null;
+    m.close_panna := null;
+  end if;
+
+  -- Has Close passed?
+  if not is_cross then
+    close_passed := (now_t >= m.close_time);
+  else
+    -- Overnight market: closed between 00:05 and 06:00 AM
+    close_passed := (now_t >= m.close_time and now_t < '06:00:00'::time);
+  end if;
+
+  if m.close_panna is not null or close_passed then
+    raise exception 'Market has closed for today (% closed at %)', m.name, to_char(m.close_time, 'HH12:MI AM');
   end if;
 
   for bet_item in select * from jsonb_array_elements(_bets)
@@ -364,6 +455,7 @@ grant execute on function public.place_bucket_bets(uuid, jsonb) to authenticated
 grant execute on function public.place_bet(uuid,text,text,text,integer) to authenticated;
 grant execute on function public.declare_result(uuid,text,text) to authenticated;
 grant execute on function public.reset_market(uuid) to authenticated;
+grant execute on function public.auto_reset_stale_markets() to authenticated, anon;
 
 -- 14. MOBILE NUMBER AUTH TRIGGER & PROFILES PHONE COLUMN
 alter table public.profiles add column if not exists phone text;

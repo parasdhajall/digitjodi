@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Clock, Play, Zap, Smartphone, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { fmtTime, resultLabel, marketStatus } from "@/lib/matka";
+import { fmtTime, resultLabel, marketStatus, canMarketDeclareOpen } from "@/lib/matka";
 import { useAuth, useTodayExpense } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/")({
@@ -27,6 +27,7 @@ export const marketsQuery = {
     if (error) throw error;
     return data;
   },
+  refetchInterval: 30000,
 };
 
 function Index() {
@@ -104,8 +105,13 @@ function Index() {
 
       <div className="grid gap-4 sm:grid-cols-2">
         {markets?.map((m) => {
+          const canOpen = canMarketDeclareOpen(m);
+          // If market's open session for today hasn't arrived yet, any open/close panna is from yesterday
+          const displayOpen = canOpen ? m.open_panna : null;
+          const displayClose = canOpen ? m.close_panna : null;
+
           const st = marketStatus(m);
-          const done = !!m.close_panna;
+          const done = !canOpen ? false : !!displayClose;
           const isOpen = st.state === "open" && !done;
           const badge = isOpen
             ? "bg-success/20 text-success border-success/30"
@@ -131,7 +137,7 @@ function Index() {
                 {/* Main Digits Display */}
                 <div className="my-4 rounded-lg bg-background/60 py-3 text-center">
                   <p className="font-display text-4xl tracking-widest text-primary md:text-5xl">
-                    {resultLabel(m.open_panna, m.close_panna)}
+                    {resultLabel(displayOpen, displayClose)}
                   </p>
                 </div>
               </div>

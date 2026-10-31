@@ -443,6 +443,47 @@ function Admin() {
     });
   }, [markets]);
 
+  // 6:00 AM Morning Auto-Reset Engine:
+  // Automatically detects markets whose open session has not arrived today, but still carry old results from yesterday.
+  // Overnight markets (e.g. Main Bazar 21:40 - 00:05) are protected until 00:05 AM.
+  // At 06:00 AM, any unopened market with old results is automatically reset in DB so today starts clean!
+  const isAutoResettingRef = useRef(false);
+
+  useEffect(() => {
+    if (!markets || markets.length === 0 || isAutoResettingRef.current) return;
+
+    const staleMarkets = markets.filter((m) => {
+      const canOpen = canMarketDeclareOpen(m);
+      return !canOpen && (m.open_panna || m.close_panna);
+    });
+
+    if (staleMarkets.length === 0) return;
+
+    const runMorningAutoReset = async () => {
+      isAutoResettingRef.current = true;
+      try {
+        console.log(`[6:00 AM Auto-Reset] Found ${staleMarkets.length} unopened markets with old results. Resetting for today...`);
+        let count = 0;
+        for (const m of staleMarkets) {
+          const { error } = await supabase.rpc("reset_market", { _market: m.id });
+          if (!error) count++;
+        }
+        if (count > 0) {
+          toast.success(`☀️ 6:00 AM Auto-Reset: Cleaned ${count} markets for today's new games!`, {
+            duration: 5000,
+          });
+          refresh();
+        }
+      } catch (err) {
+        console.error("[6:00 AM Auto-Reset] Error during auto-reset:", err);
+      } finally {
+        isAutoResettingRef.current = false;
+      }
+    };
+
+    runMorningAutoReset();
+  }, [markets]);
+
   // Handlers to reset unopened markets or all markets
   const [isResettingUnopened, setIsResettingUnopened] = useState(false);
   const handleResetUnopenedMarkets = async () => {
@@ -635,11 +676,11 @@ function Admin() {
                 </div>
                 <div>
                   <h3 className="font-semibold text-sm text-foreground">
-                    {unopenedMarketsWithResults.length} Unopened Markets have previous results set!
+                    {unopenedMarketsWithResults.length} Unopened Markets have previous results set
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">
                     Today's open time hasn't arrived yet for: <strong className="text-foreground">{unopenedMarketsWithResults.map((m) => m.name).join(", ")}</strong>.
-                    Reset them now so players can place bets today.
+                    6:00 AM Auto-Reset cleans them automatically so players can place fresh bets today.
                   </p>
                 </div>
               </div>
@@ -698,7 +739,10 @@ function Admin() {
               <Button>Add Market</Button>
             </form>
 
-            <div className="flex items-center">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded-lg">
+                ☀️ 6:00 AM Auto-Reset Active
+              </span>
               <Button
                 type="button"
                 variant="outline"

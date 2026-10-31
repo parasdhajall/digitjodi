@@ -26,7 +26,7 @@ import {
 } from "@/lib/thermalPrinter";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, useProfile, useTodayExpense } from "@/hooks/useAuth";
-import { GAMES, PLAYABLE, type GameType, fmtTime, resultLabel, isOpenPast, isClosePast, getPlayerDisplayName } from "@/lib/matka";
+import { GAMES, PLAYABLE, type GameType, fmtTime, resultLabel, isOpenPast, isClosePast, getPlayerDisplayName, canMarketDeclareOpen } from "@/lib/matka";
 import {
   SINGLE_PANNA_BY_ANK,
   DOUBLE_PANNA_BY_ANK,
@@ -723,7 +723,10 @@ function PlayPage() {
         {/* Live Market Result */}
         <div className="mt-2 text-center rounded-lg bg-background/60 py-1.5">
           <span className="font-display text-2xl tracking-widest text-primary">
-            {resultLabel(m.open_panna, m.close_panna)}
+            {resultLabel(
+              m && canMarketDeclareOpen(m) ? m.open_panna : null,
+              m && canMarketDeclareOpen(m) ? m.close_panna : null
+            )}
           </span>
         </div>
       </div>

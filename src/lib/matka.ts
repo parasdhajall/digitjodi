@@ -47,6 +47,8 @@ export const istHHMM = () => {
 export const toMin = (t: string) => { const [h = 0, m = 0] = t.split(":").map(Number); return h * 60 + m; };
 
 export function isOpenPast(m: { open_time: string; close_time: string; open_panna?: string | null }) {
+  // If today's open session has not arrived yet, open session cannot be past
+  if (!canMarketDeclareOpen(m)) return false;
   if (m.open_panna) return true;
   const nowM = toMin(istHHMM());
   const openM = toMin(m.open_time);
@@ -55,16 +57,37 @@ export function isOpenPast(m: { open_time: string; close_time: string; open_pann
 }
 
 export function isClosePast(m: { open_time: string; close_time: string; close_panna?: string | null }) {
+  // If today's open session has not arrived yet, close session cannot be past
+  if (!canMarketDeclareOpen(m)) return false;
   if (m.close_panna) return true;
   const nowM = toMin(istHHMM());
   const openM = toMin(m.open_time);
   const closeM = toMin(m.close_time);
-  return closeM > openM ? nowM >= closeM : (nowM >= closeM && nowM < openM);
+  if (closeM > openM) {
+    return nowM >= closeM;
+  } else {
+    // Overnight market (e.g. 21:40 to 00:05): close is between 00:05 and 06:00 AM
+    return nowM >= closeM && nowM < 360;
+  }
 }
 
 export type MarketState = "open" | "closed";
 export function marketStatus(m: { active: boolean; open_time: string; close_time: string; open_panna?: string | null; close_panna?: string | null }) {
   if (!m.active) return { state: "closed" as MarketState, note: "Closed (Off)" };
+
+  // If today's open session hasn't arrived yet (morning/afternoon before open time):
+  // Market is open for players to place today's bets!
+  if (!canMarketDeclareOpen(m)) {
+    // For overnight market between 00:05 and 06:00 AM, market is closed for the night
+    const nowM = toMin(istHHMM());
+    const oM = toMin(m.open_time);
+    const cM = toMin(m.close_time);
+    if (cM < oM && nowM >= cM && nowM < 360) {
+      return { state: "closed" as MarketState, note: "Closed for today" };
+    }
+    return { state: "open" as MarketState, note: "Open for Play" };
+  }
+
   if (isClosePast(m)) {
     return { state: "closed" as MarketState, note: "Closed for today" };
   }
@@ -101,7 +124,7 @@ export function canMarketDeclareClose(m: { open_time: string; close_time: string
     return nowM >= cM;
   } else {
     // Overnight market: close is after midnight (e.g. 00:05)
-    return nowM >= cM && nowM < oM;
+    return nowM >= cM && nowM < 360;
   }
 }
 
