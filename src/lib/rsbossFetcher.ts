@@ -35,17 +35,113 @@ const MARKET_ALIASES: Record<string, string> = {
   "MAIN BAZAR": "MAIN BAZAR",
 };
 
+function parseResultEntry(rawName: string, rawVal: string, nowIso: string): MarketLiveResult | null {
+  const cleanName = rawName
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+
+  const cleanVal = rawVal
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+
+  if (!cleanVal || cleanVal.includes("Loading") || cleanVal.includes("***")) {
+    return null;
+  }
+
+  const matchedKey = MARKET_ALIASES[cleanName] || cleanName;
+
+  // Format 1: Full result "123-45-678"
+  const fullMatch = cleanVal.match(/^(\d{3})-(\d{2})-(\d{3})$/);
+  // Format 2: Half result (open declared, close pending) "123-4" or "123-45"
+  const halfMatch = cleanVal.match(/^(\d{3})-(\d{1,2})$/);
+
+  if (fullMatch) {
+    return {
+      marketName: matchedKey,
+      rawResult: cleanVal,
+      openPanna: fullMatch[1],
+      openDigit: fullMatch[2][0] || null,
+      closeDigit: fullMatch[2][1] || null,
+      closePanna: fullMatch[3],
+      isOpenDeclared: true,
+      isCloseDeclared: true,
+      updatedAt: nowIso,
+    };
+  } else if (halfMatch) {
+    return {
+      marketName: matchedKey,
+      rawResult: cleanVal,
+      openPanna: halfMatch[1],
+      openDigit: halfMatch[2][0] || null,
+      closeDigit: null,
+      closePanna: null,
+      isOpenDeclared: true,
+      isCloseDeclared: false,
+      updatedAt: nowIso,
+    };
+  }
+
+  return null;
+}
+
 export const fetchRsbossLiveResults = createServerFn({ method: "GET" }).handler(
   async (): Promise<{
     success: boolean;
-    source: "rsboss" | "matkaguessing" | "none";
+    source: "dpboss" | "rsboss" | "matkaguessing" | "none";
     results: Record<string, MarketLiveResult>;
     error?: string;
   }> => {
     const results: Record<string, MarketLiveResult> = {};
     const nowIso = new Date().toISOString();
 
-    // 1. Try Primary Source: https://rsboss.net
+    // 1. PRIMARY SOURCE: https://dpbossnet.me/ (Official & Standard for Indian retail players)
+    try {
+      const dpbossRes = await fetch("https://dpbossnet.me/", {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (dpbossRes.ok) {
+        const html = await dpbossRes.text();
+
+        // Pattern 1: <h4>MARKET</h4> ... <span>RESULT</span>
+        const reH4 = /<h4>\s*([^<]+?)\s*<\/h4>\s*<span>\s*([^<]+?)\s*<\/span>/gi;
+        let m;
+        while ((m = reH4.exec(html)) !== null) {
+          const entry = parseResultEntry(m[1], m[2], nowIso);
+          if (entry && !results[entry.marketName]) {
+            results[entry.marketName] = entry;
+          }
+        }
+
+        // Pattern 2: <span class="h8">MARKET</span> ... <span class="h9">RESULT</span>
+        const reH8 =
+          /<span[^>]*class=['"]h8['"][^>]*>\s*([^<]+?)\s*<\/span>\s*<span[^>]*class=['"]h9['"][^>]*>\s*([^<]+?)\s*<\/span>/gi;
+        while ((m = reH8.exec(html)) !== null) {
+          const entry = parseResultEntry(m[1], m[2], nowIso);
+          if (entry && !results[entry.marketName]) {
+            results[entry.marketName] = entry;
+          }
+        }
+
+        if (Object.keys(results).length > 0) {
+          return { success: true, source: "dpboss", results };
+        }
+      }
+    } catch (dpErr: any) {
+      console.warn("DPBoss.me primary fetch failed, falling back to RSBoss:", dpErr?.message);
+    }
+
+    // 2. BACKUP SOURCE 1: https://rsboss.net
     try {
       const res = await fetch("https://rsboss.net", {
         headers: {
@@ -63,52 +159,9 @@ export const fetchRsbossLiveResults = createServerFn({ method: "GET" }).handler(
         let m;
 
         while ((m = re.exec(html)) !== null) {
-          const rawName = m[1]
-            .replace(/<[^>]+>/g, "")
-            .replace(/&amp;/g, "&")
-            .replace(/\s+/g, " ")
-            .trim()
-            .toUpperCase();
-          const rawVal = m[2]
-            .replace(/<!--[\s\S]*?-->/g, "")
-            .replace(/<[^>]+>/g, "")
-            .replace(/\s+/g, "")
-            .trim();
-
-          if (!rawVal || rawVal.includes("Loading") || rawVal.includes("***")) {
-            continue;
-          }
-
-          const matchedKey = MARKET_ALIASES[rawName] || rawName;
-
-          // Check format: either "123-45-678" or "123-4"
-          const fullMatch = rawVal.match(/^(\d{3})-(\d{2})-(\d{3})$/);
-          const halfMatch = rawVal.match(/^(\d{3})-(\d{1,2})$/);
-
-          if (fullMatch) {
-            results[matchedKey] = {
-              marketName: matchedKey,
-              rawResult: rawVal,
-              openPanna: fullMatch[1],
-              openDigit: fullMatch[2][0] || null,
-              closeDigit: fullMatch[2][1] || null,
-              closePanna: fullMatch[3],
-              isOpenDeclared: true,
-              isCloseDeclared: true,
-              updatedAt: nowIso,
-            };
-          } else if (halfMatch) {
-            results[matchedKey] = {
-              marketName: matchedKey,
-              rawResult: rawVal,
-              openPanna: halfMatch[1],
-              openDigit: halfMatch[2][0] || null,
-              closeDigit: null,
-              closePanna: null,
-              isOpenDeclared: true,
-              isCloseDeclared: false,
-              updatedAt: nowIso,
-            };
+          const entry = parseResultEntry(m[1], m[2], nowIso);
+          if (entry && !results[entry.marketName]) {
+            results[entry.marketName] = entry;
           }
         }
 
@@ -117,10 +170,10 @@ export const fetchRsbossLiveResults = createServerFn({ method: "GET" }).handler(
         }
       }
     } catch (e: any) {
-      console.warn("RSBoss.net fetch failed, trying fallback:", e?.message);
+      console.warn("RSBoss.net fallback failed, trying MatkaGuessing:", e?.message);
     }
 
-    // 2. Fallback Source: https://matkaguessing.in/live.json
+    // 3. BACKUP SOURCE 2: https://matkaguessing.in/live.json
     try {
       const fbRes = await fetch("https://matkaguessing.in/live.json", {
         headers: { Accept: "application/json" },
@@ -133,45 +186,19 @@ export const fetchRsbossLiveResults = createServerFn({ method: "GET" }).handler(
 
         for (const [slug, rawVal] of Object.entries(marketsObj) as [string, string][]) {
           if (!rawVal || typeof rawVal !== "string" || rawVal.includes("***")) continue;
-
-          // Normalize slug to upper name e.g. "kalyan" -> "KALYAN"
           const normName = slug.replace(/-/g, " ").toUpperCase();
-          const matchedKey = MARKET_ALIASES[normName] || normName;
-
-          const fullMatch = rawVal.match(/^(\d{3})-(\d{2})-(\d{3})$/);
-          const halfMatch = rawVal.match(/^(\d{3})-(\d{1,2})$/);
-
-          if (fullMatch && !results[matchedKey]) {
-            results[matchedKey] = {
-              marketName: matchedKey,
-              rawResult: rawVal,
-              openPanna: fullMatch[1],
-              openDigit: fullMatch[2][0] || null,
-              closeDigit: fullMatch[2][1] || null,
-              closePanna: fullMatch[3],
-              isOpenDeclared: true,
-              isCloseDeclared: true,
-              updatedAt: nowIso,
-            };
-          } else if (halfMatch && !results[matchedKey]) {
-            results[matchedKey] = {
-              marketName: matchedKey,
-              rawResult: rawVal,
-              openPanna: halfMatch[1],
-              openDigit: halfMatch[2][0] || null,
-              closeDigit: null,
-              closePanna: null,
-              isOpenDeclared: true,
-              isCloseDeclared: false,
-              updatedAt: nowIso,
-            };
+          const entry = parseResultEntry(normName, rawVal, nowIso);
+          if (entry && !results[entry.marketName]) {
+            results[entry.marketName] = entry;
           }
         }
 
-        return { success: true, source: "matkaguessing", results };
+        if (Object.keys(results).length > 0) {
+          return { success: true, source: "matkaguessing", results };
+        }
       }
     } catch (fbErr: any) {
-      console.error("Fallback live fetch also failed:", fbErr?.message);
+      console.error("MatkaGuessing live fetch also failed:", fbErr?.message);
     }
 
     return {

@@ -653,8 +653,8 @@ function Admin() {
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
               </span>
               <span className="font-semibold text-xs text-foreground tracking-wide flex items-center gap-1">
-                RSBoss.net Live Sync
-                <span className="text-[10px] text-muted-foreground font-mono">({rsbossData?.source || "connecting"})</span>
+                DPBoss.me & RSBoss Live Sync
+                <span className="text-[10px] text-muted-foreground font-mono">({rsbossData?.source?.toUpperCase() || "CONNECTING"})</span>
               </span>
               {readyRsbossDeclarations.length > 0 && (
                 <span className="rounded-full bg-primary/20 text-primary border border-primary/30 px-2 py-0.2 text-[10px] font-bold animate-pulse">
@@ -663,7 +663,7 @@ function Admin() {
               )}
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Live market results fetched automatically from <strong className="text-foreground">rsboss.net</strong>. Choose between Manual, 1-Click Semi-Auto, or Full-Auto declare.
+              Live market results fetched automatically from primary source <strong className="text-foreground">dpbossnet.me</strong> (with rsboss.net backup). Choose between Manual, 1-Click Semi-Auto, or Full-Auto declare.
             </p>
           </div>
 
