@@ -45,7 +45,11 @@ export const istHHMM = () => {
   const d = new Date(Date.now() + (new Date().getTimezoneOffset() + 330) * 60000);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
-export const toMin = (t: string) => { const [h = 0, m = 0] = t.split(":").map(Number); return h * 60 + m; };
+export const toMin = (t?: string | null) => {
+  if (!t || typeof t !== "string") return 0;
+  const [h = 0, m = 0] = t.split(":").map(Number);
+  return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+};
 
 export function isOpenPast(m: { open_time: string; close_time: string; open_panna?: string | null }) {
   // If today's open session has not arrived yet, open session cannot be past

@@ -524,20 +524,6 @@ function Admin() {
     }
   };
 
-  if (isLoading) return null;
-  if (!profile?.isAdmin) {
-    return <main className="p-8 text-center text-muted-foreground">Access denied. Admins only.</main>;
-  }
-
-  // Count ready auto results (strictly checking session timing)
-  const readyRsbossDeclarations = (markets ?? []).filter((m) => {
-    const live = rsbossData?.results[m.name];
-    if (!live) return false;
-    if (!m.open_panna && canMarketDeclareOpen(m) && live.openPanna) return true;
-    if (m.open_panna && !m.close_panna && canMarketDeclareClose(m) && live.closePanna) return true;
-    return false;
-  });
-
   const [isApplyingSchedule, setIsApplyingSchedule] = useState(false);
   const isAutoScheduleAppliedRef = useRef(false);
 
@@ -585,13 +571,27 @@ function Admin() {
   };
 
   useEffect(() => {
-    if (!markets || markets.length === 0 || !user || isAutoScheduleAppliedRef.current) return;
+    if (!markets || markets.length === 0 || !user || !profile?.isAdmin || isAutoScheduleAppliedRef.current) return;
     const hasPadmavati = markets.some((m) => m.name.toUpperCase() === "PADMAVATI");
     if (!hasPadmavati) {
       isAutoScheduleAppliedRef.current = true;
       handleApplyUserSchedule();
     }
-  }, [markets, user]);
+  }, [markets, user, profile?.isAdmin]);
+
+  // Count ready auto results (strictly checking session timing)
+  const readyRsbossDeclarations = (markets ?? []).filter((m) => {
+    const live = rsbossData?.results[m.name];
+    if (!live) return false;
+    if (!m.open_panna && canMarketDeclareOpen(m) && live.openPanna) return true;
+    if (m.open_panna && !m.close_panna && canMarketDeclareClose(m) && live.closePanna) return true;
+    return false;
+  });
+
+  if (isLoading) return null;
+  if (!profile?.isAdmin) {
+    return <main className="p-8 text-center text-muted-foreground">Access denied. Admins only.</main>;
+  }
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 px-4 py-8">
