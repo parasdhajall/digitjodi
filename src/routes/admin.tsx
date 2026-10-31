@@ -357,7 +357,7 @@ function Admin() {
     const checkAndAutoDeclare = async () => {
       for (const m of markets) {
         if (!m.active) continue;
-        const live = rsbossData.results[m.name];
+        const live = rsbossData?.results?.[m.name];
         if (!live) continue;
 
         // Auto declare Open ONLY if open time has arrived today and open_panna is missing
@@ -532,7 +532,7 @@ function Admin() {
     try {
       const desiredMarkets = [
         { name: "SRIDEVI", open_time: "11:30:00", close_time: "12:30:00" },
-        { name: "PADMAVATI", open_time: "11:40:00", close_time: "12:40:00" },
+        { name: "PADMAVATI", open_time: "11:35:00", close_time: "12:35:00" },
         { name: "TIME BAZAR", open_time: "13:10:00", close_time: "14:10:00" },
         { name: "MILAN DAY", open_time: "15:10:00", close_time: "17:10:00" },
         { name: "RAJDHANI DAY", open_time: "15:10:00", close_time: "17:10:00" },
@@ -572,8 +572,8 @@ function Admin() {
 
   useEffect(() => {
     if (!markets || markets.length === 0 || !user || !profile?.isAdmin || isAutoScheduleAppliedRef.current) return;
-    const hasPadmavati = markets.some((m) => m.name.toUpperCase() === "PADMAVATI");
-    if (!hasPadmavati) {
+    const padmavati = markets.find((m) => m.name.toUpperCase() === "PADMAVATI");
+    if (!padmavati || padmavati.open_time !== "11:35:00") {
       isAutoScheduleAppliedRef.current = true;
       handleApplyUserSchedule();
     }
@@ -581,7 +581,7 @@ function Admin() {
 
   // Count ready auto results (strictly checking session timing)
   const readyRsbossDeclarations = (markets ?? []).filter((m) => {
-    const live = rsbossData?.results[m.name];
+    const live = rsbossData?.results?.[m.name];
     if (!live) return false;
     if (!m.open_panna && canMarketDeclareOpen(m) && live.openPanna) return true;
     if (m.open_panna && !m.close_panna && canMarketDeclareClose(m) && live.closePanna) return true;
@@ -761,7 +761,7 @@ function Admin() {
                 <Sparkles className="h-4 w-4 text-gold" /> 10-Market Schedule (Padmavati + Safe Corrections)
               </h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Includes <strong>PADMAVATI</strong> (11:40 - 12:40), <strong>PADMAVATI NIGHT</strong> (7:40 - 8:40), safe <strong>SRIDEVI</strong> (11:30 - 12:30), <strong>SRIDEVI NIGHT</strong> (7:10 - 8:10), and all other requested timings.
+                Includes <strong>PADMAVATI</strong> (11:35 - 12:35), <strong>PADMAVATI NIGHT</strong> (7:40 - 8:40), safe <strong>SRIDEVI</strong> (11:30 - 12:30), <strong>SRIDEVI NIGHT</strong> (7:10 - 8:10), and all other requested timings.
               </p>
             </div>
             <Button
@@ -843,7 +843,7 @@ function Admin() {
               const session: "open" | "close" = m.open_panna ? "close" : "open";
               const st = marketStatus(m);
               const done = !!m.close_panna;
-              const live = rsbossData?.results[m.name];
+              const live = rsbossData?.results?.[m.name];
               const pnl = marketPnLMap[m.id] || { collection: 0, payout: 0, net: 0, betsCount: 0 };
 
               const canOpen = canMarketDeclareOpen(m);

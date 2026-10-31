@@ -28,8 +28,12 @@ export const PLAYABLE = (Object.keys(GAMES) as GameType[]).filter((k) => !("lega
 
 export const gameLabel = (g: string) => GAMES[g as GameType]?.label ?? g;
 
-export const fmtTime = (t: string) => {
-  const [h = 0, m = 0] = t.split(":").map(Number);
+export const fmtTime = (t?: string | null) => {
+  if (!t || typeof t !== "string") return "--:--";
+  const parts = t.split(":");
+  if (parts.length < 2) return t;
+  const h = Number(parts[0]) || 0;
+  const m = Number(parts[1]) || 0;
   const ap = h >= 12 ? "PM" : "AM";
   return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${ap}`;
 };
