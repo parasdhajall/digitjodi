@@ -40,3 +40,4 @@ export function findFamilyByJodi(input: string): JodiFamily | null {
   if (clean.length < 2) return null;
   return JODI_TO_FAMILY_MAP.get(clean) ?? null;
 }
+

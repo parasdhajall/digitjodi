@@ -2,7 +2,7 @@ import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Calendar, Clock, X, ShoppingBag, Trash2, Plus, CheckCircle2, Printer, Layers, Sparkles, Table, Check, Search, Info } from "lucide-react";
+import { ArrowLeft, Calendar, Clock, X, ShoppingBag, Trash2, Plus, CheckCircle2, Printer, Layers, Sparkles, Table, Check, Search, Info, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -1627,7 +1627,7 @@ function PlayPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => selectJodiFamily(JODI_FAMILIES_15[6]) /* 12 */}
+                    onClick={() => JODI_FAMILIES_15[6] && selectJodiFamily(JODI_FAMILIES_15[6])}
                     className="text-xs font-semibold"
                   >
                     Try Example Family: 12 (8 Jodis)
@@ -1839,7 +1839,7 @@ function PlayPage() {
                   </Button>
                   <Button
                     type="button"
-                    onClick={handleDirectPlay}
+                    onClick={handlePlay}
                     className="flex-1 h-11 text-xs font-bold rounded-xl shadow-lg bg-primary hover:bg-primary/90 text-primary-foreground"
                   >
                     <Play className="h-4 w-4 mr-1 fill-current" /> Play Now (₹{totalJodiFamilyPoints})
