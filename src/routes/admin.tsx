@@ -538,6 +538,61 @@ function Admin() {
     return false;
   });
 
+  const [isApplyingSchedule, setIsApplyingSchedule] = useState(false);
+  const isAutoScheduleAppliedRef = useRef(false);
+
+  const handleApplyUserSchedule = async () => {
+    setIsApplyingSchedule(true);
+    try {
+      const desiredMarkets = [
+        { name: "SRIDEVI", open_time: "11:30:00", close_time: "12:30:00" },
+        { name: "PADMAVATI", open_time: "11:40:00", close_time: "12:40:00" },
+        { name: "TIME BAZAR", open_time: "13:10:00", close_time: "14:10:00" },
+        { name: "MILAN DAY", open_time: "15:10:00", close_time: "17:10:00" },
+        { name: "RAJDHANI DAY", open_time: "15:10:00", close_time: "17:10:00" },
+        { name: "SRIDEVI NIGHT", open_time: "19:10:00", close_time: "20:10:00" },
+        { name: "PADMAVATI NIGHT", open_time: "19:40:00", close_time: "20:40:00" },
+        { name: "MILAN NIGHT", open_time: "21:15:00", close_time: "23:15:00" },
+        { name: "RAJDHANI NIGHT", open_time: "21:30:00", close_time: "23:35:00" },
+        { name: "KALYAN NIGHT", open_time: "21:40:00", close_time: "23:30:00" },
+      ];
+
+      for (const item of desiredMarkets) {
+        const existing = markets?.find((m) => m.name.toUpperCase() === item.name);
+        if (existing) {
+          await supabase
+            .from("markets")
+            .update({ open_time: item.open_time, close_time: item.close_time, active: true })
+            .eq("id", existing.id);
+        } else {
+          await supabase.from("markets").insert({
+            name: item.name,
+            open_time: item.open_time,
+            close_time: item.close_time,
+            active: true,
+            sort_order: (markets?.length ?? 0) + 1,
+          });
+        }
+      }
+
+      await qc.invalidateQueries({ queryKey: ["markets"] });
+      toast.success("All 10 bazars updated: Padmavati added & corrected safe timings set!");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update schedule");
+    } finally {
+      setIsApplyingSchedule(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!markets || markets.length === 0 || !user || isAutoScheduleAppliedRef.current) return;
+    const hasPadmavati = markets.some((m) => m.name.toUpperCase() === "PADMAVATI");
+    if (!hasPadmavati) {
+      isAutoScheduleAppliedRef.current = true;
+      handleApplyUserSchedule();
+    }
+  }, [markets, user]);
+
   return (
     <main className="mx-auto max-w-5xl space-y-6 px-4 py-8">
       {/* Admin Title & Tabs */}
@@ -698,6 +753,28 @@ function Admin() {
               </Button>
             </div>
           )}
+
+          {/* Custom 10-Market Schedule & Padmavati Sync Banner */}
+          <div className="rounded-xl border border-primary/30 bg-card p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+            <div>
+              <h3 className="font-semibold text-sm text-foreground flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4 text-gold" /> 10-Market Schedule (Padmavati + Safe Corrections)
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Includes <strong>PADMAVATI</strong> (11:40 - 12:40), <strong>PADMAVATI NIGHT</strong> (7:40 - 8:40), safe <strong>SRIDEVI</strong> (11:30 - 12:30), <strong>SRIDEVI NIGHT</strong> (7:10 - 8:10), and all other requested timings.
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              disabled={isApplyingSchedule}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs gap-1.5 shrink-0 shadow"
+              onClick={handleApplyUserSchedule}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isApplyingSchedule ? "animate-spin" : ""}`} />
+              {isApplyingSchedule ? "Updating..." : "⚡ Sync 10 Markets Schedule"}
+            </Button>
+          </div>
 
           {/* Add Market Form & Reset All Action */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-end justify-between gap-3">
